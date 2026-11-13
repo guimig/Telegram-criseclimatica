@@ -1,6 +1,6 @@
 """Notificações da classificação consultiva do Observatório."""
 from zoneinfo import ZoneInfo
-from .source import timestamp
+from .source import SourceError, timestamp
 
 LABELS = {
     "verde": ("🟢", "Normalidade"), "azul": ("🔵", "Preparação"),
@@ -57,7 +57,7 @@ def format_transition(previous, current, at, risk, historical=False):
                     last = timestamp(end).astimezone(ZoneInfo("America/Sao_Paulo")).strftime("%d/%m %H:%M")
                     if timestamp(start) < timestamp(end):
                         details.append("  Período informado: " + first + " a " + last)
-                except Exception:
+                except (SourceError, ValueError, TypeError):
                     # Períodos não conciliados não são apresentados como horários confirmados.
                     pass
         if details:
