@@ -29,6 +29,19 @@ A primeira execução apenas registra o estado inicial sem anunciar uma alteraç
 - O bot **não substitui avisos da Defesa Civil, não emite decisões institucionais e não determina suspensão de aulas**.
 - Para pausar notificações, desative o workflow pelo GitHub Actions.
 
+## Como confirmar um envio real ao grupo
+
+**Atenção:** o workflow **Testes do robo** apenas executa testes locais com envio simulado. Aprovação do CI não significa mensagem entregue. A versão anterior desses testes imprimia indevidamente `[ENVIADO] ... message_id=42`: isso era **fictício**.
+
+Para testar o grupo de fato:
+
+1. Acesse **Actions → Monitorar risco consultivo - Telegram → Run workflow** na branch `main`.
+2. Defina **dry_run = false** e **test_message = true**. A combinação `dry_run = true` (padrão) **não envia mensagens**.
+3. Abra a execução de **Monitorar risco consultivo - Telegram**, etapa **Monitorar publicacao**, e procure `[TESTE] message_id=`. Esse registro, após a chamada da API, indica que o Telegram confirmou envio ao grupo configurado.
+4. Se ocorrer erro, confira os secrets `TELEGRAM_TOKEN` e `TELEGRAM_CHAT_ID`, o ID numérico **negativo** do grupo e a participação/permissão do bot. Nunca divulgue o token. Caso use tópicos, verifique o tópico geral.
+
+O cliente agora confere no retorno da API o `chat.type` (grupo ou supergrupo) e o `chat.id` de destino, sem publicar o identificador nos logs. A primeira execução normal (`dry_run = false`, `test_message = false`) apenas inicializa o cursor sem notificar mudança retroativa.
+
 ## Testes
 
 Python 3.11+; apenas biblioteca padrão. Execute:
