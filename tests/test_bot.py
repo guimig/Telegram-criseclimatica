@@ -50,6 +50,11 @@ class MonitorTests(unittest.TestCase):
         with self.assertRaises(SourceError):
             plan_steps(state, [episode("amarelo", -20)])
 
+    def test_cursor_level_inconsistency_is_rejected(self):
+        state = {**DEFAULT_STATE, "last_episode_at": stamp(-50), "last_level": "amarelo"}
+        with self.assertRaises(SourceError):
+            plan_steps(state, [episode("verde", -50), episode("amarelo", -20)])
+
     def test_state_file_roundtrip(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "state.json"
