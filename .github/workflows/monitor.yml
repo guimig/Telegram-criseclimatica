@@ -32,7 +32,7 @@ jobs:
           python -m unittest discover -s tests -v
       - name: Ler estado duravel
         run: |
-          git fetch origin bot-state
+          git fetch origin bot-state:refs/remotes/origin/bot-state
           git show origin/bot-state:state.json > "$RUNNER_TEMP/telegram-state.json"
           python -c 'from pathlib import Path; from src.state import read_state; import os; read_state(Path(os.environ["RUNNER_TEMP"]) / "telegram-state.json")'
       - name: Monitorar publicacao
@@ -49,7 +49,7 @@ jobs:
       - name: Salvar cursor apos confirmacao
         if: ${{ !(github.event_name == 'workflow_dispatch' && (inputs.dry_run || inputs.test_message)) }}
         run: |
-          git fetch origin bot-state
+          git fetch origin bot-state:refs/remotes/origin/bot-state
           git switch -C bot-state origin/bot-state
           cp "$RUNNER_TEMP/telegram-state.json" state.json
           if git diff --quiet -- state.json; then exit 0; fi
