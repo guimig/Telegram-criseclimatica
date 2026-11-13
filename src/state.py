@@ -50,8 +50,11 @@ def plan_steps(state: dict[str, Any], episodes: list[dict[str, Any]]) -> tuple[l
         latest = episodes[-1]
         return [], {**state, "last_episode_at": latest["first_seen_at"], "last_level": latest["state"]}
     last_time = timestamp(state["last_episode_at"])
-    if not any(timestamp(e["first_seen_at"]) == last_time for e in episodes):
+    matching = next((e for e in episodes if timestamp(e["first_seen_at"]) == last_time), None)
+    if matching is None:
         raise SourceError("Cursor não localizado na memória do Observatório; revisar antes de reinicializar")
+    if matching["state"] != state["last_level"]:
+        raise SourceError("Nível persistido diverge do episódio referenciado; revisão necessária")
     steps: list[dict[str, Any]] = []
     current_level = state["last_level"]
     for episode in episodes:
