@@ -1,11 +1,19 @@
 name: Monitorar risco consultivo - Telegram
+run-name: "Telegram risco | ${{ github.event_name == 'workflow_dispatch' && inputs.source || github.event_name }}"
 on:
-  push:
-    branches: [main]
   schedule:
-    - cron: '*/10 * * * *'
+    # Conferir a cada 10 min, deslocado 7 min do disparador principal.
+    # O monitor so executa se nao houver sucesso externo nos ultimos 15 min.
+    - cron: '7,17,27,37,47,57 * * * *'
   workflow_dispatch:
     inputs:
+      source:
+        description: 'Identificacao do disparador externo'
+        type: choice
+        options:
+          - manual
+          - cron-job.org
+        default: manual
       dry_run:
         description: 'Simular sem enviar ou gravar estado'
         type: boolean
@@ -16,6 +24,7 @@ on:
         default: false
 permissions:
   contents: write
+  actions: read
 concurrency:
   group: telegram-risk-monitor
   cancel-in-progress: false
@@ -28,16 +37,25 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - name: Avaliar disparador principal (somente contingencia)
+        if: ${{ github.event_name == 'schedule' }}
+        id: backup
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python scripts/check_backup.py --github-output "$GITHUB_OUTPUT"
       - name: Testar modulos
+        if: ${{ github.event_name != 'schedule' || steps.backup.outputs.should_run == 'true' }}
         run: |
           python -m compileall -q src tests
           python -m unittest discover -s tests -v
       - name: Ler estado duravel
+        if: ${{ github.event_name != 'schedule' || steps.backup.outputs.should_run == 'true' }}
         run: |
           git fetch origin bot-state:refs/remotes/origin/bot-state
           git show origin/bot-state:state.json > "$RUNNER_TEMP/telegram-state.json"
           python -c 'from pathlib import Path; from src.state import read_state; import os; read_state(Path(os.environ["RUNNER_TEMP"]) / "telegram-state.json")'
       - name: Monitorar publicacao
+        if: ${{ github.event_name != 'schedule' || steps.backup.outputs.should_run == 'true' }}
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
@@ -49,7 +67,7 @@ jobs:
           if [ "$TEST_MESSAGE" = "true" ]; then args+=(--test-message); fi
           python -m src.main --state "$RUNNER_TEMP/telegram-state.json" "${args[@]}"
       - name: Salvar cursor apos confirmacao
-        if: ${{ !(github.event_name == 'workflow_dispatch' && (inputs.dry_run || inputs.test_message)) }}
+        if: ${{ (github.event_name != 'schedule' || steps.backup.outputs.should_run == 'true') && !(github.event_name == 'workflow_dispatch' && (inputs.dry_run || inputs.test_message)) }}
         run: |
           git fetch origin bot-state:refs/remotes/origin/bot-state
           git switch -C bot-state origin/bot-state
