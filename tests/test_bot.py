@@ -50,6 +50,39 @@ class MonitorTests(unittest.TestCase):
             with self.assertRaises(TelegramError):
                 send_telegram("token-falso", "-100123", "Teste")
 
+    def test_accepts_published_legacy_episodes_without_replaying_them(self):
+        # O historico real de novembro/2026 preserva os estados antigos do PN13.
+        episodes = [
+            {**episode("technical_attention", -150), "rule_version": "pn13-14-2026-multisource-v3"},
+            {**episode("routine", -110), "rule_version": "pn13-14-2026-multisource-v3"},
+            {**episode("partial", -90), "rule_version": "pn13-14-2026-multisource-v3"},
+            {**episode("verde", -50), "rule_version": "araquari-risk-v3"},
+            {**episode("amarelo", -20), "rule_version": "araquari-risk-v4"},
+        ]
+        result = publication(episodes=episodes)
+        steps, baseline = plan_steps(DEFAULT_STATE, result.history["episodes"])
+        self.assertEqual(steps, [])
+        self.assertEqual(baseline["last_level"], "amarelo")
+        self.assertEqual(baseline["last_episode_at"], stamp(-20))
+
+    def test_rejects_unknown_level_in_recent_classification(self):
+        episodes = [
+            {**episode("strange", -50), "rule_version": "araquari-risk-v4"},
+            {**episode("amarelo", -20), "rule_version": "araquari-risk-v4"},
+        ]
+        with self.assertRaises(SourceError):
+            publication(episodes=episodes)
+
+    def test_legacy_state_after_operational_cursor_is_not_alerted(self):
+        persisted = {**DEFAULT_STATE, "last_episode_at": stamp(-50), "last_level": "verde"}
+        episodes = [
+            episode("verde", -50),
+            {**episode("routine", -20), "rule_version": "pn13-14-2026-multisource-v3"},
+            episode("amarelo", -10),
+        ]
+        with self.assertRaises(SourceError):
+            plan_steps(persisted, episodes)
+
     def test_initial_baseline_without_notification(self):
         steps, baseline = plan_steps(DEFAULT_STATE, [episode("verde", -50), episode("amarelo", -20)])
         self.assertFalse(steps)

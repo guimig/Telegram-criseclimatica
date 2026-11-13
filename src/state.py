@@ -48,6 +48,8 @@ def plan_steps(state: dict[str, Any], episodes: list[dict[str, Any]]) -> tuple[l
         raise SourceError("Não é possível avançar sem episódios")
     if state["last_episode_at"] is None:
         latest = episodes[-1]
+        if latest["state"] not in STATES:
+            raise SourceError("Não é possível iniciar no estado legado; aguardar classificação atual")
         return [], {**state, "last_episode_at": latest["first_seen_at"], "last_level": latest["state"]}
     last_time = timestamp(state["last_episode_at"])
     matching = next((e for e in episodes if timestamp(e["first_seen_at"]) == last_time), None)
@@ -61,6 +63,8 @@ def plan_steps(state: dict[str, Any], episodes: list[dict[str, Any]]) -> tuple[l
         if timestamp(episode["first_seen_at"]) <= last_time:
             continue
         next_level = episode["state"]
+        if next_level not in STATES:
+            raise SourceError("Novo episódio usa estado legado; não é possível notificar sem classificação atual")
         steps.append({
             "episode": episode, "previous_level": current_level,
             "current_level": next_level, "notify": current_level != next_level,
