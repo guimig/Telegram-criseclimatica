@@ -1,5 +1,8 @@
 """Testes locais sintéticos sem rede e sem Telegram."""
 import tempfile
+import io
+import json
+from contextlib import redirect_stdout
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -8,6 +11,7 @@ from src.message_formatter import format_transition
 from src.source import DASHBOARD_KIND, HISTORY_KIND, RISK_KIND, SourceError, validate_publication
 from src.state import DEFAULT_STATE, plan_steps, read_state, write_state
 from src.main import process
+from src.telegram_client import send_telegram, TelegramError
 
 NOW = datetime(2026, 11, 13, 22, 0, tzinfo=timezone.utc)
 def stamp(offset=0):
@@ -27,6 +31,25 @@ def publication(level="amarelo", episodes=None):
     return validate_publication(dashboard, history, now=NOW)
 
 class MonitorTests(unittest.TestCase):
+    def test_telegram_rejects_private_id_before_network(self):
+        with patch("src.telegram_client.urlopen") as opened:
+            with self.assertRaises(TelegramError):
+                send_telegram("token-falso", "123456", "Teste")
+            opened.assert_not_called()
+
+    def test_telegram_confirms_group_as_destination(self):
+        payload = {"ok": True, "result": {"message_id": 128, "chat": {"id": -100123, "type": "supergroup"}}}
+        with patch("src.telegram_client.urlopen") as opened:
+            opened.return_value.__enter__.return_value.read.return_value = json.dumps(payload).encode()
+            self.assertEqual(send_telegram("token-falso", "-100123", "Teste"), 128)
+
+    def test_telegram_refuses_wrong_group_in_response(self):
+        payload = {"ok": True, "result": {"message_id": 128, "chat": {"id": -100999, "type": "supergroup"}}}
+        with patch("src.telegram_client.urlopen") as opened:
+            opened.return_value.__enter__.return_value.read.return_value = json.dumps(payload).encode()
+            with self.assertRaises(TelegramError):
+                send_telegram("token-falso", "-100123", "Teste")
+
     def test_initial_baseline_without_notification(self):
         steps, baseline = plan_steps(DEFAULT_STATE, [episode("verde", -50), episode("amarelo", -20)])
         self.assertFalse(steps)
@@ -101,8 +124,11 @@ class MonitorTests(unittest.TestCase):
             path = Path(directory) / "state.json"
             write_state(path, old)
             with patch("src.main.load_publication", return_value=publication()), patch("src.main.load_snapshots", return_value={}), patch.dict("os.environ", {"TELEGRAM_TOKEN": "test", "TELEGRAM_CHAT_ID": "-100100"}), patch("src.main.send_telegram", return_value=42) as send:
-                self.assertEqual(process(path), 1)
-                self.assertEqual(process(path), 0)
+                # Impedir que um envio simulado apareca como entrega real nos logs da CI.
+                with redirect_stdout(io.StringIO()) as output:
+                    self.assertEqual(process(path), 1)
+                    self.assertEqual(process(path), 0)
+                self.assertIn("[ENVIADO]", output.getvalue())
                 self.assertEqual(send.call_count, 1)
 
 if __name__ == "__main__":
