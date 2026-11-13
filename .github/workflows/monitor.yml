@@ -37,17 +37,17 @@ jobs:
           python -c 'from pathlib import Path; from src.state import read_state; import os; read_state(Path(os.environ["RUNNER_TEMP"]) / "telegram-state.json")'
       - name: Monitorar publicacao
         env:
-          TELEGRAM_TOKEN: ${ secrets.TELEGRAM_TOKEN }}
-          TELEGRAM_CHAT_ID: ${ secrets.TELEGRAM_CHAT_ID }}
-          DRY_RUN: ${ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
-          TEST_MESSAGE: ${ github.event_name == 'workflow_dispatch' && inputs.test_message }}
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
+          TEST_MESSAGE: ${{ github.event_name == 'workflow_dispatch' && inputs.test_message }}
         run: |
           args=()
           if [ "$DRY_RUN" = "true" ]; then args+=(--dry-run); fi
           if [ "$TEST_MESSAGE" = "true" ]; then args+=(--test-message); fi
           python -m src.main --state "$RUNNER_TEMP/telegram-state.json" "${args[@]}"
       - name: Salvar cursor apos confirmacao
-        if: ${ !(github.event_name == 'workflow_dispatch' && (inputs.dry_run || inputs.test_message)) }}
+        if: ${{ !(github.event_name == 'workflow_dispatch' && (inputs.dry_run || inputs.test_message)) }}
         run: |
           git fetch origin bot-state
           git switch -C bot-state origin/bot-state
