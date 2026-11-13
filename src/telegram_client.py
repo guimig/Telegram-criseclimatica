@@ -15,6 +15,13 @@ def send_telegram(token: str, chat_id: str, message: str) -> int:
     """Retorna ID da mensagem após confirmação da API; não registra o token."""
     if not token or not chat_id:
         raise TelegramError("TELEGRAM_TOKEN e TELEGRAM_CHAT_ID precisam estar configurados")
+    # Somente grupos e supergrupos: impedir confirmacao de envio para usuario privado.
+    try:
+        expected_chat_id = int(chat_id.strip())
+    except ValueError:
+        raise TelegramError("TELEGRAM_CHAT_ID deve conter o identificador numérico do grupo") from None
+    if expected_chat_id >= 0:
+        raise TelegramError("TELEGRAM_CHAT_ID não corresponde a um grupo (ID deve ser negativo)")
     if not message or len(message) > 3900:
         raise TelegramError("Mensagem vazia ou longa demais para envio seguro")
     request = Request(
@@ -41,4 +48,9 @@ def send_telegram(token: str, chat_id: str, message: str) -> int:
     result = payload.get("result") or {}
     if not isinstance(result, dict) or not isinstance(result.get("message_id"), int):
         raise TelegramError("Telegram não confirmou o ID da mensagem")
+    chat = result.get("chat")
+    if (not isinstance(chat, dict) or chat.get("type") not in ("group", "supergroup")
+            or chat.get("id") != expected_chat_id):
+        # Nunca publicar ID do grupo nem token nos logs.
+        raise TelegramError("Telegram não confirmou envio ao grupo configurado; confira TELEGRAM_CHAT_ID")
     return result["message_id"]
