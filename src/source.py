@@ -11,6 +11,9 @@ from urllib.request import Request, urlopen
 
 BASE_URL = "https://guimig.github.io/criseclimatica"
 STATES = frozenset({"verde", "azul", "amarelo", "laranja", "vermelho", "roxo", "partial"})
+# Estados historicos anteriores a classificacao consultiva em cores.
+# Aceitos somente como registros anteriores; nunca sao convertidos em alertas.
+LEGACY_STATES = frozenset({"routine", "technical_attention"})
 DASHBOARD_KIND = "araquari_weather_dashboard_not_official_decision"
 HISTORY_KIND = "araquari_assessment_episodes_and_epagri_notice_history"
 RISK_KIND = "consultative_risk_level_not_official_decision"
@@ -94,8 +97,14 @@ def validate_publication(dashboard: dict, history: dict, *, now: datetime | None
         raise SourceError("Histórico de níveis ausente ou vazio")
     previous_at = None
     for episode in episodes:
-        if not isinstance(episode, dict) or episode.get("state") not in STATES:
+        if not isinstance(episode, dict):
             raise SourceError("Episódio inválido no histórico de níveis")
+        level = episode.get("state")
+        if level not in STATES:
+            version = episode.get("rule_version")
+            if (level not in LEGACY_STATES or not isinstance(version, str)
+                    or not version.startswith("pn13-")):
+                raise SourceError("Estado de histórico não reconhecido pelo monitor")
         seen_at = timestamp(episode.get("first_seen_at"))
         if seen_at > timestamp(stamp) or (previous_at is not None and seen_at <= previous_at):
             raise SourceError("Episódios fora de ordem temporal")
