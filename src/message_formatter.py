@@ -46,6 +46,20 @@ def format_transition(previous, current, at, risk, historical=False):
                 info = str(item["value"]) + " " + clip(item["unit"], 20)
             if source or info:
                 details.append("• " + clip(": ".join(t for t in (source, info) if t), 200))
+            url = item.get("url")
+            if isinstance(url, str) and url.startswith("https://") and len(url) < 250:
+                details.append("  Fonte: " + url)
+            start = item.get("start_at")
+            end = item.get("end_at")
+            if start and end:
+                try:
+                    first = timestamp(start).astimezone(ZoneInfo("America/Sao_Paulo")).strftime("%d/%m %H:%M")
+                    last = timestamp(end).astimezone(ZoneInfo("America/Sao_Paulo")).strftime("%d/%m %H:%M")
+                    if timestamp(start) < timestamp(end):
+                        details.append("  Período informado: " + first + " a " + last)
+                except Exception:
+                    # Períodos não conciliados não são apresentados como horários confirmados.
+                    pass
         if details:
             lines += ["", "Evidências:", *details]
     else:
