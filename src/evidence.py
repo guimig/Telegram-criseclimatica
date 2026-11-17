@@ -74,10 +74,11 @@ def specific_notice_url(row: dict, source: str) -> str | None:
     domain = (parsed.hostname or "").lower()
     if source.upper().startswith("INMET"):
         number = str(row.get("id") or "").strip()
-        # Os identificadores e o padrão de rota dos avisos são fornecidos pelo INMET.
+        # O ID vem de id_aviso da API; o portal HTML usa outro identificador.
+        # O item CAP/RSS é individual, evitando link para aviso HTML incorreto.
         if re.fullmatch(r"[0-9]{3,12}", number):
             if domain in ("alertas2.inmet.gov.br", "avisos.inmet.gov.br", "apiprevmet3.inmet.gov.br", ""):
-                return f"https://avisos.inmet.gov.br/{number}"
+                return f"https://apiprevmet3.inmet.gov.br/avisos/rss/{number}"
         if (parsed.scheme == "https" and domain in ("avisos.inmet.gov.br", "alertas2.inmet.gov.br")
                 and re.fullmatch(r"/[0-9]{3,12}/?", parsed.path)):
             return raw
