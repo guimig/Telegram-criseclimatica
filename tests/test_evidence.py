@@ -103,7 +103,7 @@ class EvidenceTests(unittest.TestCase):
         self.assertEqual(drivers[0].source, "INMET")
         self.assertEqual(drivers[0].url, "https://apiprevmet3.inmet.gov.br/avisos/rss/28717")
         text = format_continuity("amarelo", iso(0), drivers)
-        self.assertIn("Período oficial: verifique na fonte.", text)
+        self.assertIn("Validade a confirmar.", text)
 
     def test_epagri_individual_article_only(self):
         epagri = {"url": "https://ciram.epagri.sc.gov.br/index.php/2026/11/16/temporais-em-sc/",
