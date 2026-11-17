@@ -9,11 +9,12 @@ from pathlib import Path
 from unittest.mock import patch
 
 from src.bordering import (KIND, acknowledge_bordering, events_from_dashboard,
-                           format_bordering, plan_bordering)
+                           format_bordering, plan_bordering, covered_by_local_message)
 from src.main import process
 from src.source import SourceError
 from src.state import DEFAULT_STATE, read_state, write_state
-from test_bot import publication, stamp, NOW
+from test_bot import publication, stamp, NOW, episode
+from src.situations import Situation
 
 
 def context(*, danger="Perigo", identifier="1001", title="Tempestade", status="available",
@@ -21,6 +22,9 @@ def context(*, danger="Perigo", identifier="1001", title="Tempestade", status="a
     return {"schema_version": 1, "kind": KIND, "effect_on_local_risk": "none",
             "checked_at": stamp(), "status": status, "notices": [{
                 "id": identifier, "title": title, "severity": danger,
+                "severity_rank": {"Perigo": 2, "Grande Perigo": 3,
+                                  "Perigo Potencial": 1, "Atenção": 1,
+                                  "Normalidade": 0}.get(danger, 0),
                 "start_at": start or stamp(-30), "end_at": end or stamp(90),
                 "scope": "bordering_municipalities_only", "araquari_included": False,
                 "retained_previous": False,
@@ -41,9 +45,31 @@ class BorderEventTests(unittest.TestCase):
         self.assertEqual(format_bordering(events[0], stamp(), "verde").count("https://"), 1)
 
     def test_potential_and_scheduled_do_not_notify(self):
-        self.assertEqual(events_from_dashboard({"bordering_notice_context": context(danger="Perigo Potencial")}, stamp()), [])
+        for label in ("Perigo Potencial", "Atenção", "Normalidade"):
+            with self.subTest(label=label):
+                self.assertEqual(events_from_dashboard({"bordering_notice_context": context(danger=label)}, stamp()), [])
+        # Inconsistent severity strings and ranks must not promote low warnings.
+        misleading = context(danger="Perigo Potencial")
+        misleading["notices"][0]["severity_rank"] = 2
+        self.assertEqual(events_from_dashboard({"bordering_notice_context": misleading}, stamp()), [])
+        misleading = context(danger="Perigo")
+        misleading["notices"][0]["severity_rank"] = 1
+        self.assertEqual(events_from_dashboard({"bordering_notice_context": misleading}, stamp()), [])
         self.assertEqual(events_from_dashboard({"bordering_notice_context": context(start=stamp(30))}, stamp()), [])
         self.assertEqual(events_from_dashboard({"bordering_notice_context": context(end=stamp(-1))}, stamp()), [])
+
+    def test_local_equal_or_more_severe_message_prevents_repeat(self):
+        regional = events_from_dashboard({"bordering_notice_context": context()}, stamp())[0]
+        same = Situation("a"*28, "2026-11-13", "tempestade", 30,
+                         "Tempestade local", ("INMET",))
+        self.assertTrue(covered_by_local_message(regional, [same]))
+        self.assertFalse(covered_by_local_message(regional, [
+            Situation("b"*28, "2026-11-13", "tempestade", 20, "Potencial local", ("INMET",))]))
+        self.assertFalse(covered_by_local_message(regional, [
+            Situation("c"*28, "2026-11-13", "vento_forte", 40, "Ventos fortes", ("INMET",))]))
+        self.assertFalse(covered_by_local_message(regional, []))
+        great = events_from_dashboard({"bordering_notice_context": context(danger="Grande Perigo")}, stamp())[0]
+        self.assertFalse(covered_by_local_message(great, [same]))
 
     def test_unknown_context_does_not_initialize_state(self):
         self.assertIsNone(events_from_dashboard({}, stamp()))
