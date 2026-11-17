@@ -129,6 +129,10 @@ def extract_drivers(risk: dict, *, at: str) -> list[Driver]:
         reason = clean(candidate.get("reason"))
         for row in _relevant_evidence(candidate):
             source = clean(row.get("source") or row.get("name") or row.get("station") or "")
+            if not source and basis == "positive_notice_pending_time_verification":
+                source = "INMET"
+            if not source and basis == "qualitative_epagri_evidence":
+                source = "Epagri/Ciram"
             title = clean(row.get("title") or row.get("type") or "")
             start = clean(row.get("start_at")) or None
             end = clean(row.get("end_at")) or None
