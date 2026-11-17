@@ -81,9 +81,9 @@ class EvidenceTests(unittest.TestCase):
     def test_individual_inmet_link_not_generic_homepage(self):
         risk = build(notices=[issue()]).dashboard["risk_classification"]
         drivers = extract_drivers(risk, at=iso(0))
-        self.assertEqual(drivers[0].url, "https://avisos.inmet.gov.br/28717")
+        self.assertEqual(drivers[0].url, "https://apiprevmet3.inmet.gov.br/avisos/rss/28717")
         message = format_continuity("amarelo", iso(0), drivers)
-        self.assertIn("https://avisos.inmet.gov.br/28717", message)
+        self.assertIn("https://apiprevmet3.inmet.gov.br/avisos/rss/28717", message)
         self.assertNotIn("https://alertas2.inmet.gov.br/", message)
         self.assertIn("18/11/2026", message)
         self.assertTrue(message.endswith(FOOTER))
@@ -145,7 +145,7 @@ class EvidenceTests(unittest.TestCase):
     def test_transition_shows_all_relevant_basis(self):
         risk = build(notices=[issue()], signals=[signal()], forecasts=[forecast()]).dashboard["risk_classification"]
         text = format_transition("verde", "amarelo", iso(0), risk)
-        self.assertIn("https://avisos.inmet.gov.br/28717", text)
+        self.assertIn("https://apiprevmet3.inmet.gov.br/avisos/rss/28717", text)
         self.assertIn("40.0 km/h", text)
         self.assertIn("trovoadas", text)
         self.assertTrue(text.endswith(FOOTER))
@@ -155,7 +155,7 @@ class EvidenceTests(unittest.TestCase):
                               for n in range(22)]).dashboard["risk_classification"]
         text = format_continuity("amarelo", iso(0), extract_drivers(risk, at=iso(0)))
         self.assertLessEqual(len(text), 3900)
-        self.assertIn("https://avisos.inmet.gov.br/", text)
+        self.assertIn("https://apiprevmet3.inmet.gov.br/avisos/rss/", text)
         self.assertTrue(text.endswith(FOOTER))
 
     def test_green_and_unclassified_never_generate_continuity(self):
@@ -186,8 +186,8 @@ class IntegrationTests(unittest.TestCase):
             count, messages = self._run(path, after)
             self.assertEqual((count, len(messages)), (1, 1))
             self.assertIn("CONTINUIDADE", messages[0].args[2])
-            self.assertIn("https://avisos.inmet.gov.br/28718", messages[0].args[2])
-            self.assertNotIn("https://avisos.inmet.gov.br/28717", messages[0].args[2])
+            self.assertIn("https://apiprevmet3.inmet.gov.br/avisos/rss/28718", messages[0].args[2])
+            self.assertNotIn("https://apiprevmet3.inmet.gov.br/avisos/rss/28717", messages[0].args[2])
             count, messages = self._run(path, after)
             self.assertEqual((count, len(messages)), (0, 0))
 
