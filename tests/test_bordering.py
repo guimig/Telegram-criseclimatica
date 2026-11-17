@@ -16,11 +16,11 @@ from src.state import DEFAULT_STATE, read_state, write_state
 from test_bot import publication, stamp, NOW
 
 
-def context(*, danger="Perigo", identifier="1001", status="available",
+def context(*, danger="Perigo", identifier="1001", title="Tempestade", status="available",
             start=None, end=None, municipalities=None):
     return {"schema_version": 1, "kind": KIND, "effect_on_local_risk": "none",
             "checked_at": stamp(), "status": status, "notices": [{
-                "id": identifier, "title": "Tempestade", "severity": danger,
+                "id": identifier, "title": title, "severity": danger,
                 "start_at": start or stamp(-30), "end_at": end or stamp(90),
                 "scope": "bordering_municipalities_only", "araquari_included": False,
                 "retained_previous": False,
@@ -72,7 +72,15 @@ class BorderEventTests(unittest.TestCase):
         item = context()["notices"][0]
         data = context()
         data["notices"].append({**item, "municipalities": [{"id": "guaramirim", "name": "Guaramirim", "ibge_code": "4206504"}]})
-        self.assertEqual(len(events_from_dashboard({"bordering_notice_context": data}, stamp())), 1)
+        merged = events_from_dashboard({"bordering_notice_context": data}, stamp())
+        self.assertEqual(len(merged), 1)
+        self.assertEqual(set(merged[0].municipalities), {"Joinville", "Guaramirim"})
+
+    def test_same_day_same_phenomenon_new_id_does_not_repeat(self):
+        original = events_from_dashboard({"bordering_notice_context": context()}, stamp())
+        state, _ = plan_bordering(DEFAULT_STATE, original, stamp())
+        repeated = events_from_dashboard({"bordering_notice_context": context(identifier="1002")}, stamp())
+        self.assertEqual(plan_bordering(state, repeated, stamp())[1], [])
 
     def test_strict_published_version_check(self):
         invalid = context()
@@ -107,7 +115,7 @@ class BorderIntegrationTests(unittest.TestCase):
             self.assertEqual(self.run_process(path, pub)[0], 0)
             self.assertTrue(read_state(path)["bordering_initialized"])
             repeated = publication()
-            repeated.dashboard["bordering_notice_context"] = context(identifier="1002")
+            repeated.dashboard["bordering_notice_context"] = context(identifier="1002", title="Ventos fortes")
             count, messages = self.run_process(path, repeated)
             self.assertEqual((count, len(messages)), (1, 1))
             self.assertIn("ENTORNO", messages[0])
@@ -123,7 +131,7 @@ class BorderIntegrationTests(unittest.TestCase):
             pub.dashboard["bordering_notice_context"] = context()
             self.run_process(path, pub)
             other = publication()
-            other.dashboard["bordering_notice_context"] = context(identifier="2002")
+            other.dashboard["bordering_notice_context"] = context(identifier="2002", title="Ventos fortes")
             with patch("src.main.load_publication", return_value=other), \
                  patch("src.main.send_telegram", side_effect=RuntimeError("offline")), \
                  patch.dict("os.environ", {"TELEGRAM_TOKEN":"test","TELEGRAM_CHAT_ID":"-10054321"}), \
