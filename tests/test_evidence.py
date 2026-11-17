@@ -88,6 +88,23 @@ class EvidenceTests(unittest.TestCase):
         self.assertIn("18/11/2026", message)
         self.assertTrue(message.endswith(FOOTER))
 
+    def test_pending_inmet_without_explicit_source_has_individual_link(self):
+        risk = build().dashboard["risk_classification"]
+        risk["candidates"] = [{
+            "level": "amarelo", "basis": "positive_notice_pending_time_verification",
+            "reason": "INMET: Tempestade; validade a confirmar.",
+            "valid_until": iso(120),
+            "evidence": [{"id": "28717", "type": "Tempestade",
+                          "url": "https://alertas2.inmet.gov.br/",
+                          "window_as_reported": "18/11/2026 00:00 — 18/11/2026 23:59"}],
+        }]
+        drivers = extract_drivers(risk, at=iso(0))
+        self.assertEqual(len(drivers), 1)
+        self.assertEqual(drivers[0].source, "INMET")
+        self.assertEqual(drivers[0].url, "https://apiprevmet3.inmet.gov.br/avisos/rss/28717")
+        text = format_continuity("amarelo", iso(0), drivers)
+        self.assertIn("Período oficial: verifique na fonte.", text)
+
     def test_epagri_individual_article_only(self):
         epagri = {"url": "https://ciram.epagri.sc.gov.br/index.php/2026/11/16/temporais-em-sc/",
                   "source": "Epagri/Ciram", "title": "Temporais"}
