@@ -13,7 +13,8 @@ DEFAULT_STATE = {"schema_version": 1, "location_id": "araquari",
                  "last_episode_at": None, "last_level": None,
                  "evidence_initialized": False, "seen_evidence": {},
                  "material_initialized": False,
-                 "announced_situations": {}, "pending_situations": {}}
+                 "announced_situations": {}, "pending_situations": {},
+                 "bordering_initialized": False, "bordering_announcements": {}}
 SEEN_RETENTION_DAYS = 45
 MAX_SEEN_EVIDENCE = 500
 CONSOLIDATION_MINUTES = 30
@@ -67,6 +68,21 @@ def validate_state(state: dict[str, Any]) -> dict[str, Any]:
             timestamp(record.get(time_field))
             verified[key] = {"rank": rank, time_field: record[time_field]}
         result[field] = verified
+    bordering_initialized = state.get("bordering_initialized", False)
+    bordering_announcements = state.get("bordering_announcements", {})
+    if not isinstance(bordering_initialized, bool) or not isinstance(bordering_announcements, dict) or len(bordering_announcements) > 200:
+        raise ValueError("Estado de avisos limítrofes inválido")
+    validated = {}
+    for key, row in bordering_announcements.items():
+        if not isinstance(key, str) or not re.fullmatch(r"[0-9a-f]{28}", key) or not isinstance(row, dict):
+            raise ValueError("Identificador limítrofe inválido")
+        rank = row.get("rank")
+        if type(rank) is not int or rank not in (2, 3):
+            raise ValueError("Severidade limítrofe inválida")
+        timestamp(row.get("notified_at"))
+        validated[key] = {"rank": rank, "notified_at": row["notified_at"]}
+    result["bordering_initialized"] = bordering_initialized
+    result["bordering_announcements"] = validated
     return result
 
 
