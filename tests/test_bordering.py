@@ -55,6 +55,9 @@ class BorderEventTests(unittest.TestCase):
         misleading = context(danger="Perigo")
         misleading["notices"][0]["severity_rank"] = 1
         self.assertEqual(events_from_dashboard({"bordering_notice_context": misleading}, stamp()), [])
+        mixed_case = context(danger="grande PERIGO")
+        mixed_case["notices"][0]["severity_rank"] = 3
+        self.assertEqual(len(events_from_dashboard({"bordering_notice_context": mixed_case}, stamp())), 1)
         self.assertEqual(events_from_dashboard({"bordering_notice_context": context(start=stamp(30))}, stamp()), [])
         self.assertEqual(events_from_dashboard({"bordering_notice_context": context(end=stamp(-1))}, stamp()), [])
 
