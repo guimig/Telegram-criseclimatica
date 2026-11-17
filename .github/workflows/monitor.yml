@@ -55,6 +55,8 @@ jobs:
           git show origin/bot-state:state.json > "$RUNNER_TEMP/telegram-state.json"
           python -c 'from pathlib import Path; from src.state import read_state; import os; read_state(Path(os.environ["RUNNER_TEMP"]) / "telegram-state.json")'
       - name: Monitorar publicacao
+        id: monitor
+        continue-on-error: true
         if: ${{ github.event_name != 'schedule' || steps.backup.outputs.should_run == 'true' }}
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
@@ -67,8 +69,14 @@ jobs:
           if [ "$TEST_MESSAGE" = "true" ]; then args+=(--test-message); fi
           python -m src.main --state "$RUNNER_TEMP/telegram-state.json" "${args[@]}"
       - name: Salvar cursor apos confirmacao
-        if: ${{ (github.event_name != 'schedule' || steps.backup.outputs.should_run == 'true') && !(github.event_name == 'workflow_dispatch' && (inputs.dry_run || inputs.test_message)) }}
+        # Tentar gravar mensagens já confirmadas mesmo se uma mensagem posterior falhar.
+        if: ${{ always() && (github.event_name != 'schedule' || steps.backup.outputs.should_run == 'true') && !(github.event_name == 'workflow_dispatch' && (inputs.dry_run || inputs.test_message)) }}
         run: |
+          if [ ! -s "$RUNNER_TEMP/telegram-state.json" ]; then
+            echo "Cursor não criado; sem progresso para salvar."
+            exit 0
+          fi
+          python -c 'from pathlib import Path; from src.state import read_state; import os; read_state(Path(os.environ["RUNNER_TEMP"]) / "telegram-state.json")'
           git fetch origin bot-state:refs/remotes/origin/bot-state
           git switch -C bot-state origin/bot-state
           cp "$RUNNER_TEMP/telegram-state.json" state.json
@@ -78,3 +86,8 @@ jobs:
           git add state.json
           git commit -m "chore(state): registrar ultima transicao"
           git push origin HEAD:bot-state
+      - name: Sinalizar falha operacional após preservar progresso confirmado
+        if: ${{ always() && steps.monitor.outcome == 'failure' }}
+        run: |
+          echo "::error::Monitor interrompido; progresso anterior preservado na medida do possível."
+          exit 1
