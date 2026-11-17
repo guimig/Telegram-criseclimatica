@@ -10,7 +10,7 @@ from pathlib import Path
 from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
-from src.evidence import extract_drivers, specific_notice_url
+from src.evidence import Driver, extract_drivers, specific_notice_url
 from src.main import process
 from src.message_formatter import FOOTER, PANEL, format_continuity, format_transition
 from src.situations import aggregate_situations
@@ -158,6 +158,18 @@ class PresentationTests(unittest.TestCase):
         b = situations(build(notices=[notice(severity="Perigo")]))[0]
         self.assertEqual(a.key, b.key)
         self.assertGreater(b.rank, a.rank)
+
+    def test_severe_point_measurement_not_delayed(self):
+        sample = Driver(
+            key="synthetic", kind="sinal", source="IFC Araquari",
+            reason="Rajadas elevadas observadas.", title="", url=None,
+            start_at=local("2026-11-17", "10:00"),
+            end_at=local("2026-11-17", "10:00"),
+            variable="gust_kmh", nature="observation", band=3,
+        )
+        situations = aggregate_situations([sample])
+        self.assertEqual(len(situations), 1)
+        self.assertEqual(situations[0].rank, 30)
 
     def test_new_independent_hazard_in_same_day_gets_another_key(self):
         storm = situations(build(notices=[notice()]))
