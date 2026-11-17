@@ -6,7 +6,11 @@ Bot separado para notificar no grupo Telegram **mudanças de nível de risco con
 
 O cron-job.org dispara a GitHub Action a cada dez minutos. O agendamento nativo do GitHub é uma contingência: a cada dez minutos, verifica se houve sucesso confirmado de um disparo externo nos últimos 15 minutos; somente quando não houve, ou quando a consulta ao histórico falhar, executa o monitor. São validados identidade do município, natureza consultiva, atualidade (até duas horas), integridade e compatibilidade entre horários de publicação. A fonte de verdade é dashboard.risk_classification; o bot não recalcula risco e não atribui nível oficial.
 
-O histórico identifica episódios amostrados de mudança e pode recuperar alterações entre duas verificações. Uma mensagem informa nível anterior e atual, subida/redução, data da coleta, justificativa e até três evidências quando fornecidas, com link para o painel. Episódios recuperados são marcados como históricos e não são apresentados como risco atual. O estado parcial significa **Sem classificação**, e não normalidade.
+O histórico identifica episódios amostrados de mudança e pode recuperar alterações entre duas verificações. Uma mensagem informa nível anterior e atual, subida/redução, data da coleta e os fundamentos do nível (com prioridade para avisos oficiais). Episódios recuperados são marcados como históricos e não são apresentados como risco atual. O estado parcial significa **Sem classificação**, e não normalidade.
+
+**Continuidade de risco:** mesmo sem mudança de cor, o robô notifica a chegada de uma **nova fundamentação relevante** do nível atual: novo aviso INMET/Epagri, revisão material de período/severidade, nova previsão municipal de fenômeno para outro dia/turno ou novo sinal instrumental de faixa/período. Uma mensagem agrupa motivos novos da mesma rodada. Avisos de nível inferior ao vigente não são apresentados como se justificassem a cor mais elevada.
+
+**Deduplicação:** o robô utiliza assinaturas persistidas no `bot-state/state.json`, ignorando relógios de coleta, renovação de vencimento técnico e pequenas alterações de valor na mesma faixa/dia. O reaparecimento de uma evidência já vista não provoca novo aviso. Os identificadores ficam registrados até 45 dias (limite de 500); depois disso um aviso reaparecido fora dessa janela pode ser tratado como novo. Na primeira execução após instalar esta versão, os fundamentos **já existentes são registrados silenciosamente**, preservando o cursor de nível anterior e evitando notificações retroativas.
 
 A primeira execução apenas registra o estado inicial sem anunciar uma alteração retroativa. Repetições de nível não geram mensagem.
 
@@ -71,7 +75,9 @@ Para testar o backup sem mudar o risco real, use os testes automatizados em `tes
 ## Segurança, persistência e limites
 
 - Token e chat ID ficam em GitHub Actions Secrets. Nenhuma chave deve ser inserida no código ou nos arquivos públicos.
-- O cursor é armazenado exclusivamente na branch bot-state, isolado da main. O workflow só faz commit de estado quando há progresso.
+- O cursor e as assinaturas de evidências são armazenados na branch bot-state, isolada da main. O workflow só faz commit quando há progresso e nunca grava dados de coleta completos em Git.
+- Se o lote enviar uma mensagem e falhar na seguinte, a Action tenta preservar o cursor já confirmado antes de encerrar com erro, reduzindo reenvios. Falhas entre a confirmação pelo Telegram e a gravação no GitHub ainda podem causar duplicação.
+- **Links individuais:** o Observatório fornece o ID `id_aviso` do INMET, mas frequentemente publica apenas a página inicial. O robô produz um URL específico ao registro CAP da **API oficial**: `https://apiprevmet3.inmet.gov.br/avisos/rss/<id>` (pode apresentar XML no navegador). O identificador da API **não é presumido** equivalente ao identificador da página HTML `avisos.inmet.gov.br/<id>`. Epagri/Ciram utiliza o URL original do artigo; quando não houver URL individual confiável, informa a limitação em vez de publicar uma página inicial como se fosse o aviso.
 - Envio só é considerado confirmado após resposta positiva do Telegram. Uma falha entre a confirmação e o commit pode causar duplicação em vez de perda silenciosa.
 - Dados atrasados, versões misturadas ou perda do episódio de referência interrompem o monitor e exigem avaliação, sem reinicialização automática.
 - A memória do Observatório contém apenas amostras de estados publicados; transições não publicadas são impossíveis de recuperar.
@@ -81,6 +87,8 @@ Para testar o backup sem mudar o risco real, use os testes automatizados em `tes
 ## Como confirmar um envio real ao grupo
 
 **Atenção:** o workflow **Testes do robo** apenas executa testes locais com envio simulado. Aprovação do CI não significa mensagem entregue. A versão anterior desses testes imprimia indevidamente `[ENVIADO] ... message_id=42`: isso era **fictício**.
+
+Os testes de continuidade são executados offline em `tests/test_evidence.py`, incluindo aviso de um novo dia com cor mantida, revisão de período, atualização de consulta sem novo evento, fonte INMET com validade pendente, retorno de aviso temporariamente ausente, integração e falhas de envio. O robô não recalcula os níveis do Observatório. A continuidade depende de uma evidência **publicada** e utilizável no nível, não de uma alteração não publicada ou de uma atualização bruta de qualquer modelo.
 
 Para testar o grupo de fato:
 

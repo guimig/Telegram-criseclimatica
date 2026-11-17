@@ -2,13 +2,18 @@
 from __future__ import annotations
 
 import json
+import re
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
 from .source import STATES, SourceError, timestamp
 
 DEFAULT_STATE = {"schema_version": 1, "location_id": "araquari",
-                 "last_episode_at": None, "last_level": None}
+                 "last_episode_at": None, "last_level": None,
+                 "evidence_initialized": False, "seen_evidence": {}}
+SEEN_RETENTION_DAYS = 45
+MAX_SEEN_EVIDENCE = 500
 
 
 def validate_state(state: dict[str, Any]) -> dict[str, Any]:
@@ -23,7 +28,22 @@ def validate_state(state: dict[str, Any]) -> dict[str, Any]:
         timestamp(episode_at)
         if level not in STATES:
             raise ValueError("Nível inválido no estado persistido")
-    return {key: state[key] for key in DEFAULT_STATE}
+    # Compatibilidade com o cursor legado, gravado antes das notificacoes
+    # de continuidade: na primeira rodada apenas semear os eventos atuais.
+    result = dict(DEFAULT_STATE)
+    result.update({key: state[key] for key in ("schema_version", "location_id",
+                                               "last_episode_at", "last_level")})
+    initialized = state.get("evidence_initialized", False)
+    seen = state.get("seen_evidence", {})
+    if not isinstance(initialized, bool) or not isinstance(seen, dict) or len(seen) > MAX_SEEN_EVIDENCE:
+        raise ValueError("Registro de fundamentacoes incompatível")
+    for key, first_seen in seen.items():
+        if not isinstance(key, str) or not re.fullmatch(r"[0-9a-f]{28}", key):
+            raise ValueError("Identificador de fundamentacao inválido")
+        timestamp(first_seen)
+    result["evidence_initialized"] = initialized
+    result["seen_evidence"] = dict(seen)
+    return result
 
 
 def read_state(path: Path) -> dict[str, Any]:
@@ -73,3 +93,33 @@ def plan_steps(state: dict[str, Any], episodes: list[dict[str, Any]]) -> tuple[l
         })
         current_level = next_level
     return steps, None
+
+
+def remember_evidence(state: dict[str, Any], keys: list[str], at: str) -> dict[str, Any]:
+    """Registra fundamentacoes confirmadas sem recriar notificacoes por recaptura.
+
+    Uma evidência pode desaparecer temporariamente e voltar: o registro permanece.
+    Prune só chaves antigas inativas para evitar crescimento ilimitado.
+    """
+    result = validate_state(state)
+    now = timestamp(at)
+    active = set(keys)
+    seen = result["seen_evidence"]
+    for key in active:
+        if not re.fullmatch(r"[0-9a-f]{28}", key):
+            raise ValueError("Assinatura de fundamentacao inválida")
+    cutoff = now - timedelta(days=SEEN_RETENTION_DAYS)
+    seen = {k: v for k, v in seen.items()
+            if k in active or timestamp(v) >= cutoff}
+    for key in sorted(active):
+        seen.setdefault(key, at)
+    if len(seen) > MAX_SEEN_EVIDENCE:
+        inactive = sorted((k for k in seen if k not in active),
+                          key=lambda k: timestamp(seen[k]))
+        for key in inactive[:len(seen) - MAX_SEEN_EVIDENCE]:
+            del seen[key]
+    if len(seen) > MAX_SEEN_EVIDENCE:
+        raise ValueError("Quantidade de fundamentacoes ativas ultrapassa limite de segurança")
+    result["evidence_initialized"] = True
+    result["seen_evidence"] = seen
+    return result
