@@ -116,3 +116,16 @@ Python 3.11+; apenas biblioteca padrão. Execute:
 - python -m src.main --test-message
 
 O arquivo state.json local precisa existir e ter schema_version=1, location_id=araquari, last_episode_at=null e last_level=null. Não precisa de credenciais para dry-run. O envio real só pode ser verificado após a configuração do grupo.
+
+
+## Avisos INMET graves em municípios limítrofes (módulo independente)
+
+Após a publicação do campo `bordering_notice_context` pelo Observatório, o monitor também poderá notificar avisos INMET oficiais de **Perigo** ou **Grande Perigo** em municípios que fazem divisa com Araquari. **Perigo Potencial** permanece visível no site, sem notificação automática.
+
+A mensagem indica explicitamente a abrangência oficial vizinha, o período vigente e que **Araquari não consta do aviso regional**. O robô não altera o nível consultivo, não supõe que o fenômeno já esteja ocorrendo em Araquari e mantém apenas um link para o painel.
+
+**Deduplicação e prioridade:** avisos oficiais são consolidados por dia e fenômeno; diferentes IDs/municípios sobre o mesmo evento não geram spam. Uma elevação de **Perigo** para **Grande Perigo** admite nova notificação. Avisos programados para o futuro ou já encerrados não disparam mensagem como aviso em curso. Avisos recuperados durante falha da fonte continuam visíveis no painel, mas não geram comunicação automática inaugural sem reconfirmação.
+
+**Migração segura:** o novo estado fica em `bot-state/state.json` sob `bordering_initialized` e `bordering_announcements`, independente de `announced_situations`. A primeira publicação válida cria uma linha de base silenciosa: nenhum alerta antigo será enviado como novo. Persistência ocorre após confirmação de cada mensagem. Os dados publicados mantêm a mesma identidade de versão exigida pelo bot.
+
+**Ordem de implantação:** publicar primeiro o PR do `criseclimatica` que gera `bordering_notice_context`; conferir o campo no `dashboard.json`; só depois integrar este PR e acompanhar o primeiro disparo (`dry_run` recomendado). Não é necessário configurar outro token, webhook ou job. Os avisos gerais de mudança de risco e as notificações locais permanecem funcionando como antes.
