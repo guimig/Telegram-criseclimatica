@@ -73,8 +73,12 @@ def events_from_dashboard(dashboard: dict, at: str) -> list[BorderingEvent] | No
             raise SourceError("Período regional inválido") from exc
         if not start < end or now >= end or start > now:
             continue  # Scheduled or expired warning, never message as ongoing.
-        severity = notice.get("severity")
-        rank = {"Perigo": 2, "Grande Perigo": 3}.get(severity)
+        severity = str(notice.get("severity") or "")
+        normalized = "".join(
+            c for c in unicodedata.normalize("NFKD", severity.casefold())
+            if not unicodedata.combining(c)
+        )
+        rank = {"perigo": 2, "grande perigo": 3}.get(" ".join(normalized.split()))
         if rank is None or notice.get("severity_rank") != rank:
             continue  # Only Perigo or Grande Perigo with matching official rank.
         if notice.get("scope") != "bordering_municipalities_only" or notice.get("araquari_included") is not False:
