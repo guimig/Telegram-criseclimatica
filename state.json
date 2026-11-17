@@ -1,6 +1,12 @@
 {
+  "evidence_initialized": true,
   "last_episode_at": "2026-11-16T13:04:19Z",
   "last_level": "amarelo",
   "location_id": "araquari",
-  "schema_version": 1
+  "schema_version": 1,
+  "seen_evidence": {
+    "074cbaafbdf5d6695d4732219159": "2026-11-17T03:19:14Z",
+    "17d2f1ceae4602077371c8b44789": "2026-11-17T03:19:14Z",
+    "5c4299d5717c4cdebb482d017aa8": "2026-11-17T03:19:14Z"
+  }
 }
