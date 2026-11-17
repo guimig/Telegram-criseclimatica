@@ -138,8 +138,8 @@ class MonitorTests(unittest.TestCase):
     def test_partial_level_not_normality(self):
         text = format_transition("verde", "partial", stamp(-20), None)
         self.assertIn("Sem classificação", text)
-        self.assertIn("não equivale à normalidade", text)
-        self.assertIn("não é alerta oficial", text)
+        self.assertIn("não significa normalidade", text)
+        self.assertIn("Classificação consultiva automatizada.", text)
 
     def test_failed_send_preserves_cursor(self):
         old = {**DEFAULT_STATE, "last_episode_at": stamp(-50), "last_level": "verde"}
