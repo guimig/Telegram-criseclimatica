@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
+import unicodedata
 from dataclasses import dataclass
 from datetime import timedelta
 from zoneinfo import ZoneInfo
@@ -32,6 +34,20 @@ class BorderingEvent:
     start_at: str
     end_at: str
     retained_previous: bool
+
+
+def _phenomenon(value: object) -> str:
+    text = "".join(c for c in unicodedata.normalize("NFKD", str(value or "").casefold())
+                   if not unicodedata.combining(c))
+    if re.search(r"tempestade|temporal|trovoada|raio", text):
+        return "tempestade"
+    if "granizo" in text:
+        return "granizo"
+    if re.search(r"vento|rajada|vendaval", text):
+        return "vento"
+    if re.search(r"chuva|precipitacao", text):
+        return "chuva"
+    return "outro"
 
 
 def events_from_dashboard(dashboard: dict, at: str) -> list[BorderingEvent] | None:
@@ -75,15 +91,24 @@ def events_from_dashboard(dashboard: dict, at: str) -> list[BorderingEvent] | No
                 raise SourceError("Município de aviso limítrofe incompatível")
             names.append(place["name"].strip())
         day = start.astimezone(LOCAL).date().isoformat()
-        raw = json.dumps([identifier, day], ensure_ascii=False, separators=(",", ":"))
+        raw = json.dumps(["limítrofes", day, _phenomenon(notice.get("title"))], ensure_ascii=False, separators=(",", ":"))
         key = hashlib.sha256(raw.encode("utf-8")).hexdigest()[:28]
         event = BorderingEvent(
             key, rank, clip(notice.get("title") or "Aviso meteorológico", 120),
             severity, tuple(sorted(set(names))), notice["start_at"], notice["end_at"],
             bool(notice.get("retained_previous")) or context["status"] == "retained_unconfirmed",
         )
-        if key not in selected or rank > selected[key].rank:
+        old = selected.get(key)
+        if old is None:
             selected[key] = event
+        else:
+            priority = event if event.rank > old.rank else old
+            selected[key] = BorderingEvent(
+                key, max(old.rank, event.rank), priority.title, priority.severity,
+                tuple(sorted(set(old.municipalities + event.municipalities))),
+                min(old.start_at, event.start_at), max(old.end_at, event.end_at),
+                old.retained_previous and event.retained_previous,
+            )
     return sorted(selected.values(), key=lambda e: (-e.rank, e.start_at, e.key))
 
 
