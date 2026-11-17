@@ -121,7 +121,7 @@ def covered_by_local_message(event: BorderingEvent, communicated: list) -> bool:
     hazard = {"vento": "vento_forte", "chuva": "chuva_intensa"}.get(hazard, hazard)
     return any(
         situation.day == day and situation.hazard == hazard
-        and situation.rank >= event.rank * 10
+        and situation.rank >= event.rank * 10 + 10
         for situation in communicated
     )
 
