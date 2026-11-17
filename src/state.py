@@ -11,9 +11,13 @@ from .source import STATES, SourceError, timestamp
 
 DEFAULT_STATE = {"schema_version": 1, "location_id": "araquari",
                  "last_episode_at": None, "last_level": None,
-                 "evidence_initialized": False, "seen_evidence": {}}
+                 "evidence_initialized": False, "seen_evidence": {},
+                 "material_initialized": False,
+                 "announced_situations": {}, "pending_situations": {}}
 SEEN_RETENTION_DAYS = 45
 MAX_SEEN_EVIDENCE = 500
+CONSOLIDATION_MINUTES = 30
+MAX_MATERIAL_SITUATIONS = 500
 
 
 def validate_state(state: dict[str, Any]) -> dict[str, Any]:
@@ -43,6 +47,26 @@ def validate_state(state: dict[str, Any]) -> dict[str, Any]:
         timestamp(first_seen)
     result["evidence_initialized"] = initialized
     result["seen_evidence"] = dict(seen)
+    material_initialized = state.get("material_initialized", False)
+    if not isinstance(material_initialized, bool):
+        raise ValueError("Indicador de situações materiais inválido")
+    result["material_initialized"] = material_initialized
+    for field, time_field in (("announced_situations", "notified_at"),
+                              ("pending_situations", "first_seen_at")):
+        items = state.get(field, {})
+        if not isinstance(items, dict) or len(items) > MAX_MATERIAL_SITUATIONS:
+            raise ValueError("Índice de situações materiais inválido")
+        verified = {}
+        for key, record in items.items():
+            if (not isinstance(key, str) or not re.fullmatch(r"[0-9a-f]{28}", key)
+                    or not isinstance(record, dict)):
+                raise ValueError("Registro de situação inválido")
+            rank = record.get("rank")
+            if type(rank) is not int or rank <= 0 or rank > 50:
+                raise ValueError("Prioridade da situação inválida")
+            timestamp(record.get(time_field))
+            verified[key] = {"rank": rank, time_field: record[time_field]}
+        result[field] = verified
     return result
 
 
@@ -123,3 +147,77 @@ def remember_evidence(state: dict[str, Any], keys: list[str], at: str) -> dict[s
     result["evidence_initialized"] = True
     result["seen_evidence"] = seen
     return result
+
+
+def _expire_announcements(state: dict[str, Any], at: str) -> dict[str, Any]:
+    """Retém a deduplicação por 45 dias; não elimina eventos ainda relevantes."""
+    result = validate_state(state)
+    cutoff = timestamp(at) - timedelta(days=SEEN_RETENTION_DAYS)
+    result["announced_situations"] = {
+        key: row for key, row in result["announced_situations"].items()
+        if timestamp(row["notified_at"]) >= cutoff
+    }
+    return result
+
+
+def prepare_situations(state: dict[str, Any], events: list, at: str) -> tuple[dict[str, Any], list]:
+    """Atualiza fila e retorna novidades prontas para uma mensagem consolidada.
+
+    Primeiro ciclo da nova versão apenas cria uma linha de base silenciosa.
+    Nenhuma notícia antiga é reenviada durante a migração.
+    """
+    result = _expire_announcements(state, at)
+    active = {event.key: event for event in events}
+    if len(active) > MAX_MATERIAL_SITUATIONS:
+        raise ValueError("Quantidade excessiva de situações atuais")
+    if not result["material_initialized"]:
+        result["material_initialized"] = True
+        result["announced_situations"] = {
+            **result["announced_situations"],
+            **{k: {"rank": ev.rank, "notified_at": at} for k, ev in active.items()},
+        }
+        result["pending_situations"] = {}
+        return validate_state(result), []
+
+    announced = result["announced_situations"]
+    pending = {}
+    for key, event in active.items():
+        if event.rank <= announced.get(key, {}).get("rank", 0):
+            continue
+        original = result["pending_situations"].get(key)
+        pending[key] = {
+            "rank": max(event.rank, original["rank"] if original else 0),
+            "first_seen_at": original["first_seen_at"] if original else at,
+        }
+    if len(pending) > MAX_MATERIAL_SITUATIONS:
+        raise ValueError("Quantidade excessiva de situações pendentes")
+    result["pending_situations"] = pending
+    current = timestamp(at)
+    due = any(
+        event.rank >= 30 or current - timestamp(pending[event.key]["first_seen_at"])
+        >= timedelta(minutes=CONSOLIDATION_MINUTES)
+        for event in active.values() if event.key in pending
+    )
+    ready = [active[key] for key in sorted(pending, key=lambda k: (active[k].day, k))] if due else []
+    return validate_state(result), ready
+
+
+def acknowledge_situations(state: dict[str, Any], events: list, at: str) -> dict[str, Any]:
+    """Confirmar somente depois de o Telegram aceitar a mensagem."""
+    result = _expire_announcements(state, at)
+    records = result["announced_situations"]
+    pending = result["pending_situations"]
+    for event in events:
+        current = records.get(event.key)
+        if current is None or event.rank > current["rank"]:
+            records[event.key] = {"rank": event.rank, "notified_at": at}
+        pending.pop(event.key, None)
+    result["material_initialized"] = True
+    return validate_state(result)
+
+
+def reset_material_after_transition(state: dict[str, Any], events: list, at: str) -> dict[str, Any]:
+    """Uma mudança de nível já comunica o quadro atual; não repetir em continuidade."""
+    result = _expire_announcements(state, at)
+    result["pending_situations"] = {}
+    return acknowledge_situations(result, events, at)

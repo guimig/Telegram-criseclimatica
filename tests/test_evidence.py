@@ -1,4 +1,4 @@
-"""Regressão: continuidade fundamentada, links individuais e idempotência."""
+"""Regressão do monitor e dos cenários materiais, sem rede e sem envios reais."""
 from __future__ import annotations
 
 import io
@@ -8,89 +8,115 @@ from contextlib import redirect_stdout
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
+from zoneinfo import ZoneInfo
 
-from src.evidence import extract_drivers, specific_notice_url
+from src.evidence import Driver, extract_drivers, specific_notice_url
 from src.main import process
-from src.message_formatter import FOOTER, format_continuity, format_transition
+from src.message_formatter import FOOTER, PANEL, format_continuity, format_transition
+from src.situations import aggregate_situations
 from src.source import DASHBOARD_KIND, HISTORY_KIND, RISK_KIND, Publication
-from src.state import DEFAULT_STATE, read_state, remember_evidence, write_state
+from src.state import DEFAULT_STATE, read_state, write_state
 from src.telegram_client import TelegramError
 
-NOW = datetime(2026, 11, 17, 3, 0, tzinfo=timezone.utc)
+NOW = datetime(2026, 11, 17, 12, 0, tzinfo=timezone.utc)
+LOCAL = ZoneInfo("America/Sao_Paulo")
 
 
-def iso(offset: int) -> str:
-    return (NOW + timedelta(minutes=offset)).isoformat().replace("+00:00", "Z")
+def iso(minutes: int = 0) -> str:
+    return (NOW + timedelta(minutes=minutes)).isoformat().replace("+00:00", "Z")
 
 
-def issue(number="28717", start=60, end=1440, source="INMET", title="Tempestade", severity="Perigo Potencial"):
-    return {"source": source, "id": number, "title": title, "severity": severity,
-            "url": "https://alertas2.inmet.gov.br/",
-            "scope": "municipality_explicit", "start_at": iso(start),
-            "end_at": iso(end), "valid_until": iso(end)}
+def local(day: str, hhmm: str) -> str:
+    moment = datetime.fromisoformat(f"{day}T{hhmm}:00").replace(tzinfo=LOCAL)
+    return moment.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
-def forecast(day="2026-11-17", phenomenon="trovoadas", period="noite"):
-    return {"source": "INMET", "day": day, "period": period,
-            "phenomena": [phenomenon], "start_at": iso(1020),
-            "end_at": iso(1200), "valid_until": iso(180)}
+def notice(day: str = "2026-11-18", number: str = "28717",
+           severity: str = "Perigo Potencial", scope: str = "municipality_explicit",
+           source: str = "INMET", title: str = "Tempestade") -> dict:
+    return {
+        "source": source, "id": number, "title": title, "severity": severity,
+        "url": "https://alertas2.inmet.gov.br/" if source == "INMET"
+               else "https://ciram.epagri.sc.gov.br/index.php/2026/11/17/temporais-em-sc/",
+        "scope": scope, "start_at": local(day, "00:00"),
+        "end_at": local(day, "23:59"), "valid_until": local(day, "23:59"),
+    }
 
 
-def signal(value=40.0, end=900):
-    return {"source": "Open-Meteo", "station": "araquari", "nature": "forecast",
-            "variable": "gust_kmh", "value": value, "band": 1,
-            "start_at": iso(end), "end_at": iso(end),
-            "valid_until": iso(200)}
+def forecast(day: str = "2026-11-18", phenomena=("trovoadas",), source="INMET") -> dict:
+    return {"source": source, "day": day, "period": "tarde",
+            "phenomena": list(phenomena), "start_at": local(day, "12:00"),
+            "end_at": local(day, "18:00"), "valid_until": iso(120)}
 
 
-def build(level="amarelo", notices=(), forecasts=(), signals=(), additional=()):
-    candidates = []
-    for notice in notices:
-        candidates.append({"level": "amarelo", "basis": "applicable_official_notice",
-                           "reason": "INMET: Tempestade.", "valid_until": iso(1440),
-                           "evidence": [notice]})
-    for row in forecasts:
-        candidates.append({"level": "amarelo", "basis": "inmet_qualitative_forecast_attention",
-                           "reason": "INMET: previsão de trovoadas.", "valid_until": iso(180),
-                           "evidence": [row]})
-    for row in signals:
-        candidates.append({"level": "amarelo", "basis": "numeric_attention",
-                           "reason": f"Rajadas: {row['value']} km/h previstas.",
-                           "valid_until": iso(200), "evidence": [row]})
-    candidates += list(additional)
+def build(*, notices=(), forecasts=(), level="amarelo", at=0,
+          historic=None, signals=()) -> Publication:
+    candidates = [
+        {"level": "amarelo", "basis": "applicable_official_notice",
+         "reason": f"{row['source']}: {row['title']}.",
+         "valid_until": row["valid_until"], "evidence": [row]}
+        for row in notices
+    ]
+    candidates.extend({
+        "level": "amarelo", "basis": "inmet_qualitative_forecast_attention",
+        "reason": f"{row['source']}: previsão de trovoadas.", "valid_until": iso(at + 120),
+        "evidence": [row],
+    } for row in forecasts)
+    candidates.extend({
+        "level": "amarelo", "basis": "numeric_attention",
+        "reason": f"Rajadas: {row['value']} km/h previstas.",
+        "valid_until": iso(at + 120), "evidence": [row],
+    } for row in signals)
+    moment = iso(at)
     risk = {"kind": RISK_KIND, "method_version": "araquari-risk-v4",
-            "level": level, "official_level": None, "generated_at": iso(0),
+            "level": level, "official_level": None, "generated_at": moment,
             "candidates": candidates, "reason": candidates[0]["reason"] if candidates else "Sem sinais."}
-    episodes = [{"state": level or "partial", "first_seen_at": iso(-180),
-                 "last_seen_at": iso(0), "rule_version": "araquari-risk-v4"}]
+    episodes = historic if historic is not None else [
+        {"state": level or "partial", "first_seen_at": iso(-180),
+         "last_seen_at": moment, "rule_version": "araquari-risk-v4"}
+    ]
     dashboard = {"kind": DASHBOARD_KIND, "location_id": "araquari",
-                 "generated_at": iso(0), "publication_at": iso(0),
+                 "generated_at": moment, "publication_at": moment,
                  "decision_automated": False, "risk_classification": risk}
     history = {"kind": HISTORY_KIND, "location_id": "araquari",
-               "generated_at": iso(0), "publication_at": iso(0),
+               "generated_at": moment, "publication_at": moment,
                "episodes": episodes}
-    return Publication(dashboard, history, iso(0))
+    return Publication(dashboard, history, moment)
 
 
-def state_of(level="amarelo"):
-    return {**DEFAULT_STATE, "last_episode_at": iso(-180),
-            "last_level": level}
+def old_state(level="amarelo") -> dict:
+    return {**DEFAULT_STATE, "last_episode_at": iso(-180), "last_level": level}
 
 
-class EvidenceTests(unittest.TestCase):
-    def test_individual_inmet_link_not_generic_homepage(self):
-        risk = build(notices=[issue()]).dashboard["risk_classification"]
-        drivers = extract_drivers(risk, at=iso(0))
+def situations(publication: Publication) -> list:
+    return aggregate_situations(extract_drivers(
+        publication.dashboard["risk_classification"], at=publication.publication_at))
+
+
+class PresentationTests(unittest.TestCase):
+    def test_one_site_link_without_any_rss_or_article_link(self):
+        warning = notice()
+        risk = build(notices=[warning]).dashboard["risk_classification"]
+        drivers = extract_drivers(risk, at=iso())
+        # Links internos seguem disponíveis à auditoria, mas nunca no Telegram.
         self.assertEqual(drivers[0].url, "https://apiprevmet3.inmet.gov.br/avisos/rss/28717")
-        message = format_continuity("amarelo", iso(0), drivers)
-        self.assertIn("https://apiprevmet3.inmet.gov.br/avisos/rss/28717", message)
-        self.assertNotIn("https://alertas2.inmet.gov.br/", message)
-        self.assertIn("18/11/2026", message)
+        message = format_continuity("amarelo", iso(), aggregate_situations(drivers))
+        self.assertEqual(message.count("https://"), 1)
+        self.assertIn(PANEL, message)
+        self.assertNotIn("/avisos/rss/", message)
+        self.assertNotIn("alertas2.inmet", message)
         self.assertTrue(message.endswith(FOOTER))
 
-    def test_pending_inmet_without_explicit_source_has_individual_link(self):
-        risk = build().dashboard["risk_classification"]
-        risk["candidates"] = [{
+    def test_regional_epagri_without_municipality_not_announced(self):
+        regional = notice("2026-11-17", "epagri-url", source="Epagri/Ciram",
+                          title="Terça-feira com temporais em SC",
+                          scope="regional_reference_not_municipal_confirmation")
+        publication = build(notices=[regional])
+        self.assertEqual(situations(publication), [])
+
+    def test_inmet_pending_window_remains_distinct_from_confirmed_validity(self):
+        publication = build()
+        publication.dashboard["risk_classification"]["candidates"] = [{
             "level": "amarelo", "basis": "positive_notice_pending_time_verification",
             "reason": "INMET: Tempestade; validade a confirmar.",
             "valid_until": iso(120),
@@ -98,165 +124,239 @@ class EvidenceTests(unittest.TestCase):
                           "url": "https://alertas2.inmet.gov.br/",
                           "window_as_reported": "18/11/2026 00:00 — 18/11/2026 23:59"}],
         }]
-        drivers = extract_drivers(risk, at=iso(0))
-        self.assertEqual(len(drivers), 1)
-        self.assertEqual(drivers[0].source, "INMET")
-        self.assertEqual(drivers[0].url, "https://apiprevmet3.inmet.gov.br/avisos/rss/28717")
-        text = format_continuity("amarelo", iso(0), drivers)
-        self.assertIn("Validade a confirmar.", text)
+        events = situations(publication)
+        self.assertEqual(len(events), 1)
+        self.assertIn("Período oficial ainda não confirmado", events[0].summary)
+        self.assertEqual(format_continuity("amarelo", iso(), events).count("https://"), 1)
 
-    def test_epagri_individual_article_only(self):
-        epagri = {"url": "https://ciram.epagri.sc.gov.br/index.php/2026/11/16/temporais-em-sc/",
-                  "source": "Epagri/Ciram", "title": "Temporais"}
-        self.assertEqual(specific_notice_url(epagri, "Epagri/Ciram"), epagri["url"])
-        self.assertIsNone(specific_notice_url(
-            {**epagri, "url": "https://ciram.epagri.sc.gov.br/"}, "Epagri/Ciram"))
-        self.assertIsNone(specific_notice_url(
-            {**epagri, "url": "https://outraempresa.com/temporais"}, "Epagri/Ciram"))
+    def test_epagri_url_remains_available_in_source_object(self):
+        row = notice(source="Epagri/Ciram")
+        self.assertEqual(specific_notice_url(row, "Epagri/Ciram"), row["url"])
 
-    def test_new_notice_same_level_gets_distinct_id(self):
-        risk1 = build(notices=[issue("28717")]).dashboard["risk_classification"]
-        risk2 = build(notices=[issue("28717"), issue("28718", start=1500, end=2800)]).dashboard["risk_classification"]
-        first = {d.key for d in extract_drivers(risk1, at=iso(0))}
-        later = {d.key for d in extract_drivers(risk2, at=iso(0))}
-        self.assertEqual(len(later - first), 1)
+    def test_duplicate_inmet_ids_same_day_are_one_situation(self):
+        a = situations(build(notices=[notice(number="28717")]))
+        b = situations(build(notices=[notice(number="28717"),
+                                       notice(number="28721")]))
+        self.assertEqual(len(a), len(b))
+        self.assertEqual(a[0].key, b[0].key)
+        self.assertEqual(a[0].rank, b[0].rank)
 
-    def test_revision_date_is_new_but_capture_time_is_not(self):
-        row = issue()
-        base = build(notices=[row]).dashboard["risk_classification"]
-        original = extract_drivers(base, at=iso(0))[0].key
-        same = {**row, "retrieved_at": iso(10), "last_seen_at": iso(10), "valid_until": iso(4000)}
-        equal = build(notices=[same]).dashboard["risk_classification"]
-        self.assertEqual(extract_drivers(equal, at=iso(0))[0].key, original)
-        revised = build(notices=[{**row, "end_at": iso(2000)}]).dashboard["risk_classification"]
-        self.assertNotEqual(extract_drivers(revised, at=iso(0))[0].key, original)
+    def test_forecast_same_day_as_official_notice_does_not_change_material_key(self):
+        a = situations(build(notices=[notice()]))
+        b = situations(build(notices=[notice()], forecasts=[forecast()]))
+        self.assertEqual([x.key for x in a], [x.key for x in b])
+        self.assertEqual(a[0].rank, b[0].rank)
 
-    def test_new_forecast_day_or_phenomenon_not_refresh(self):
-        old = build(forecasts=[forecast()]).dashboard["risk_classification"]
-        keys = {x.key for x in extract_drivers(old, at=iso(0))}
-        refreshed = build(forecasts=[{**forecast(), "collected_at": iso(30)}]).dashboard["risk_classification"]
-        self.assertEqual(keys, {x.key for x in extract_drivers(refreshed, at=iso(0))})
-        next_day = build(forecasts=[forecast(), forecast(day="2026-11-18")]).dashboard["risk_classification"]
-        self.assertEqual(len(set(x.key for x in extract_drivers(next_day, at=iso(0))) - keys), 1)
-        thunder_hail = build(forecasts=[forecast(phenomenon="granizo")]).dashboard["risk_classification"]
-        self.assertNotEqual(keys, {x.key for x in extract_drivers(thunder_hail, at=iso(0))})
+    def test_another_day_creates_new_material_key(self):
+        a = situations(build(notices=[notice()]))
+        b = situations(build(notices=[notice(), notice("2026-11-19", "28722")]))
+        self.assertEqual(len(b), 2)
+        self.assertNotEqual(a[0].key, b[-1].key)
 
-    def test_numeric_changes_same_day_are_not_an_event(self):
-        one = build(signals=[signal(40.0)]).dashboard["risk_classification"]
-        two = build(signals=[signal(42.0, end=930)]).dashboard["risk_classification"]
-        self.assertEqual(
-            {d.key for d in extract_drivers(one, at=iso(0))},
-            {d.key for d in extract_drivers(two, at=iso(0))})
+    def test_severity_escalation_in_same_day_has_same_key_but_higher_rank(self):
+        a = situations(build(notices=[notice(severity="Perigo Potencial")]))[0]
+        b = situations(build(notices=[notice(severity="Perigo")]))[0]
+        self.assertEqual(a.key, b.key)
+        self.assertGreater(b.rank, a.rank)
 
-    def test_lower_level_candidate_cannot_explain_higher_level(self):
-        risk = build(notices=[issue()]).dashboard["risk_classification"]
-        risk["level"] = "laranja"
-        risk["candidates"].append({"level": "laranja", "basis": "scoped_dated_publication_attention",
-                                    "reason": "Epagri: temporal severo.", "valid_until": iso(1000),
-                                    "evidence": [{"source": "Epagri/Ciram", "id": "report42",
-                                                  "phenomena": ["temporal"], "day": "2026-11-17"}]})
-        drivers = extract_drivers(risk, at=iso(0))
-        self.assertEqual(len(drivers), 1)
-        self.assertNotEqual(drivers[0].kind, "aviso")
+    def test_severe_point_measurement_not_delayed(self):
+        sample = Driver(
+            key="synthetic", kind="sinal", source="IFC Araquari",
+            reason="Rajadas elevadas observadas.", title="", url=None,
+            start_at=local("2026-11-17", "10:00"),
+            end_at=local("2026-11-17", "10:00"),
+            variable="gust_kmh", nature="observation", band=3,
+        )
+        situations = aggregate_situations([sample])
+        self.assertEqual(len(situations), 1)
+        self.assertEqual(situations[0].rank, 30)
 
-    def test_transition_shows_all_relevant_basis(self):
-        risk = build(notices=[issue()], signals=[signal()], forecasts=[forecast()]).dashboard["risk_classification"]
-        text = format_transition("verde", "amarelo", iso(0), risk)
-        self.assertIn("https://apiprevmet3.inmet.gov.br/avisos/rss/28717", text)
-        self.assertIn("40.0 km/h", text)
-        self.assertIn("trovoadas", text)
-        self.assertTrue(text.endswith(FOOTER))
+    def test_new_independent_hazard_in_same_day_gets_another_key(self):
+        storm = situations(build(notices=[notice()]))
+        new = situations(build(notices=[
+            notice(), notice("2026-11-18", "28729", title="Ventos fortes")
+        ]))
+        self.assertEqual(len(storm), 1)
+        self.assertEqual(len(new), 2)
 
-    def test_long_message_keeps_footer_and_valid_links(self):
-        risk = build(notices=[issue(str(28717+n), start=60+n, end=1440+n)
-                              for n in range(22)]).dashboard["risk_classification"]
-        text = format_continuity("amarelo", iso(0), extract_drivers(risk, at=iso(0)))
-        self.assertLessEqual(len(text), 3900)
-        self.assertIn("https://apiprevmet3.inmet.gov.br/avisos/rss/", text)
-        self.assertTrue(text.endswith(FOOTER))
+    def test_change_level_message_is_immediate_clear_and_consultative(self):
+        data = build(notices=[notice()])
+        message = format_transition("verde", "amarelo", iso(), data.dashboard["risk_classification"])
+        self.assertIn("Normalidade", message)
+        self.assertIn("Atenção", message)
+        self.assertIn("tempestades", message)
+        self.assertEqual(message.count("https://"), 1)
+        self.assertTrue(message.endswith(FOOTER))
 
-    def test_green_and_unclassified_never_generate_continuity(self):
-        for level in ("verde", None):
-            risk = build(level=level, notices=[issue()]).dashboard["risk_classification"]
-            self.assertEqual(extract_drivers(risk, at=iso(0)), [])
+    def test_long_event_summary_preserves_footer(self):
+        data = build(notices=[
+            notice(f"2026-11-{day:02}", number=f"287{day}")
+            for day in range(18, 27)
+        ])
+        message = format_continuity("amarelo", iso(), situations(data))
+        self.assertLessEqual(len(message), 3900)
+        self.assertEqual(message.count("https://"), 1)
+        self.assertTrue(message.endswith(FOOTER))
 
 
-class IntegrationTests(unittest.TestCase):
-    def _run(self, file: Path, publication: Publication, *, send=None):
+class OperationTests(unittest.TestCase):
+    def run_monitor(self, path: Path, publication: Publication):
         with patch("src.main.load_publication", return_value=publication), \
-                patch.dict("os.environ", {"TELEGRAM_TOKEN": "test", "TELEGRAM_CHAT_ID": "-100123"}), \
-                patch("src.main.send_telegram", return_value=123) as sender, \
-                redirect_stdout(io.StringIO()):
-            result = process(file)
-        return result, sender.call_args_list
+             patch.dict("os.environ", {"TELEGRAM_TOKEN": "test", "TELEGRAM_CHAT_ID": "-100100"}), \
+             patch("src.main.send_telegram", return_value=57) as sender, \
+             redirect_stdout(io.StringIO()):
+            count = process(path)
+        return count, [call.args[2] for call in sender.call_args_list]
 
-    def test_upgrade_seeds_evidence_silently_then_sends_new_notice_once(self):
-        before = build(notices=[issue("28717")], forecasts=[forecast()])
-        after = build(notices=[issue("28717"), issue("28718", start=1500, end=2800)],
-                      forecasts=[forecast()])
+    def test_migration_seeds_existing_events_without_sending(self):
         with tempfile.TemporaryDirectory() as td:
             path = Path(td) / "state.json"
-            write_state(path, state_of())
-            count, messages = self._run(path, before)
-            self.assertEqual((count, len(messages)), (0, 0))
-            self.assertTrue(read_state(path)["evidence_initialized"])
-            count, messages = self._run(path, after)
-            self.assertEqual((count, len(messages)), (1, 1))
-            self.assertIn("CONTINUIDADE", messages[0].args[2])
-            self.assertIn("https://apiprevmet3.inmet.gov.br/avisos/rss/28718", messages[0].args[2])
-            self.assertNotIn("https://apiprevmet3.inmet.gov.br/avisos/rss/28717", messages[0].args[2])
-            count, messages = self._run(path, after)
-            self.assertEqual((count, len(messages)), (0, 0))
+            write_state(path, old_state())
+            count, messages = self.run_monitor(path, build(notices=[notice()], forecasts=[forecast()]))
+            self.assertEqual((count, messages), (0, []))
+            current = read_state(path)
+            self.assertTrue(current["material_initialized"])
+            self.assertTrue(current["announced_situations"])
+            self.assertEqual(current["last_level"], "amarelo")
 
-    def test_returning_notice_is_not_resent(self):
+    def test_new_day_pending_thirty_minutes_then_one_message_only(self):
         with tempfile.TemporaryDirectory() as td:
             path = Path(td) / "state.json"
-            write_state(path, state_of())
-            self._run(path, build(notices=[issue()], signals=[signal()]))
-            self._run(path, build(signals=[signal()]))
-            count, msgs = self._run(path, build(notices=[issue()], signals=[signal()]))
-            self.assertEqual((count, len(msgs)), (0, 0))
-
-    def test_new_forecast_day_sends_continuation(self):
-        with tempfile.TemporaryDirectory() as td:
-            path = Path(td) / "state.json"
-            write_state(path, state_of())
-            self._run(path, build(forecasts=[forecast()]))
-            count, msgs = self._run(path, build(forecasts=[forecast(), forecast(day="2026-11-18")]))
+            write_state(path, old_state())
+            self.run_monitor(path, build(notices=[notice()]))
+            new = [notice(), notice("2026-11-19", "28722")]
+            count, msgs = self.run_monitor(path, build(notices=new, at=10))
+            self.assertEqual((count, msgs), (0, []))
+            self.assertEqual(len(read_state(path)["pending_situations"]), 1)
+            count, msgs = self.run_monitor(path, build(notices=new, at=29))
+            self.assertEqual(count, 0)
+            count, msgs = self.run_monitor(path, build(notices=new, at=40))
             self.assertEqual((count, len(msgs)), (1, 1))
-            self.assertIn("18/11/2026", msgs[0].args[2])
+            self.assertIn("19/11/2026", msgs[0])
+            self.assertNotIn("18/11/2026", msgs[0])
+            self.assertEqual(msgs[0].count("https://"), 1)
+            count, msgs = self.run_monitor(path, build(notices=new, at=50))
+            self.assertEqual((count, msgs), (0, []))
 
-    def test_send_failure_preserves_old_signatures(self):
+    def test_consolidates_two_new_days_into_one_message(self):
         with tempfile.TemporaryDirectory() as td:
             path = Path(td) / "state.json"
-            write_state(path, state_of())
-            self._run(path, build(notices=[issue()]))
-            old_state = read_state(path)
-            new_publication = build(notices=[issue(), issue("28718", start=1500, end=2800)])
-            with patch("src.main.load_publication", return_value=new_publication), \
-                    patch.dict("os.environ", {"TELEGRAM_TOKEN": "test", "TELEGRAM_CHAT_ID": "-100123"}), \
-                    patch("src.main.send_telegram", side_effect=TelegramError("network")):
+            write_state(path, old_state())
+            self.run_monitor(path, build(notices=[notice()]))
+            self.run_monitor(path, build(notices=[
+                notice(), notice("2026-11-19", "28722")
+            ], at=10))
+            count, msgs = self.run_monitor(path, build(notices=[
+                notice(), notice("2026-11-19", "28722"), notice("2026-11-20", "28723")
+            ], at=41))
+            self.assertEqual((count, len(msgs)), (1, 1))
+            self.assertIn("19/11/2026", msgs[0])
+            self.assertIn("20/11/2026", msgs[0])
+
+    def test_forecast_for_day_already_covered_by_notice_is_not_resent(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "state.json"
+            write_state(path, old_state())
+            self.run_monitor(path, build(notices=[notice()]))
+            count, msgs = self.run_monitor(path, build(
+                notices=[notice(), notice(number="28721")],
+                forecasts=[forecast()], at=50
+            ))
+            self.assertEqual((count, msgs), (0, []))
+
+    def test_regional_publication_alone_no_continuity_notification(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "state.json"
+            write_state(path, old_state())
+            self.run_monitor(path, build(notices=[notice()]))
+            regional = notice(
+                "2026-11-17", "epagri17",
+                scope="regional_reference_not_municipal_confirmation",
+                source="Epagri/Ciram", title="Terça-feira com temporais em SC")
+            count, msgs = self.run_monitor(path, build(notices=[notice(), regional], at=45))
+            self.assertEqual((count, msgs), (0, []))
+
+    def test_new_forecast_day_without_existing_notice_sends_after_delay(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "state.json"
+            write_state(path, old_state())
+            self.run_monitor(path, build(forecasts=[forecast()]))
+            self.run_monitor(path, build(
+                forecasts=[forecast(), forecast("2026-11-19")], at=5))
+            count, msgs = self.run_monitor(path, build(
+                forecasts=[forecast(), forecast("2026-11-19")], at=36))
+            self.assertEqual((count, len(msgs)), (1, 1))
+            self.assertIn("19/11/2026", msgs[0])
+
+    def test_severity_upgrade_is_immediate_and_not_resent(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "state.json"
+            write_state(path, old_state())
+            self.run_monitor(path, build(notices=[notice(severity="Perigo Potencial")]))
+            count, msgs = self.run_monitor(path, build(
+                notices=[notice(severity="Perigo")], at=10))
+            self.assertEqual((count, len(msgs)), (1, 1))
+            self.assertIn("(Perigo)", msgs[0])
+            count, msgs = self.run_monitor(path, build(
+                notices=[notice(severity="Perigo")], at=20))
+            self.assertEqual((count, msgs), (0, []))
+
+    def test_disappearing_pending_event_does_not_send_obsolete_notice(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "state.json"
+            write_state(path, old_state())
+            self.run_monitor(path, build(notices=[notice()]))
+            self.run_monitor(path, build(notices=[notice(), notice("2026-11-19", "28722")], at=10))
+            count, msgs = self.run_monitor(path, build(notices=[notice()], at=50))
+            self.assertEqual((count, msgs), (0, []))
+            self.assertFalse(read_state(path)["pending_situations"])
+
+    def test_failed_send_keeps_pending_for_retry(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "state.json"
+            write_state(path, old_state())
+            self.run_monitor(path, build(notices=[notice()]))
+            future = build(notices=[notice(), notice("2026-11-19", "28722")], at=5)
+            self.run_monitor(path, future)
+            pending = read_state(path)
+            with patch("src.main.load_publication", return_value=build(
+                    notices=[notice(), notice("2026-11-19", "28722")], at=36)), \
+                 patch.dict("os.environ", {"TELEGRAM_TOKEN": "test", "TELEGRAM_CHAT_ID": "-100100"}), \
+                 patch("src.main.send_telegram", side_effect=TelegramError("network")), \
+                 redirect_stdout(io.StringIO()):
                 with self.assertRaises(TelegramError):
                     process(path)
-            self.assertEqual(read_state(path), old_state)
+            self.assertEqual(read_state(path)["announced_situations"], pending["announced_situations"])
+            self.assertEqual(read_state(path)["pending_situations"], pending["pending_situations"])
+            count, msgs = self.run_monitor(path, build(
+                notices=[notice(), notice("2026-11-19", "28722")], at=42))
+            self.assertEqual((count, len(msgs)), (1, 1))
 
-    def test_transition_does_not_duplicate_as_continuity(self):
+    def test_transition_immediate_and_no_follow_up_for_same_event(self):
         with tempfile.TemporaryDirectory() as td:
             path = Path(td) / "state.json"
-            current = build(notices=[issue()])
-            current.history["episodes"][:] = [
+            write_state(path, {**old_state("verde"), "last_episode_at": iso(-300)})
+            transition = build(notices=[notice()], historic=[
                 {"state": "verde", "first_seen_at": iso(-300), "last_seen_at": iso(-190)},
                 {"state": "amarelo", "first_seen_at": iso(-180), "last_seen_at": iso(0)},
-            ]
-            write_state(path, {**state_of("verde"), "last_episode_at": iso(-300)})
-            with patch("src.main.load_publication", return_value=current), \
-                    patch("src.main.load_snapshots", return_value={}), \
-                    patch.dict("os.environ", {"TELEGRAM_TOKEN": "test", "TELEGRAM_CHAT_ID": "-100123"}), \
-                    patch("src.main.send_telegram", return_value=99) as sender, \
-                    redirect_stdout(io.StringIO()):
-                self.assertEqual(process(path), 1)
-            self.assertEqual(sender.call_count, 1)
-            self.assertEqual(read_state(path)["last_level"], "amarelo")
+            ])
+            with patch("src.main.load_snapshots", return_value={}):
+                count, msgs = self.run_monitor(path, transition)
+            self.assertEqual((count, len(msgs)), (1, 1))
+            self.assertIn("Normalidade", msgs[0])
+            self.assertFalse(read_state(path)["pending_situations"])
+            count, msgs = self.run_monitor(path, build(notices=[notice()], at=60))
+            self.assertEqual((count, msgs), (0, []))
+
+    def test_dry_run_does_not_write_any_state(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "state.json"
+            write_state(path, old_state())
+            before = path.read_bytes()
+            with patch("src.main.load_publication", return_value=build(notices=[notice()])), \
+                 redirect_stdout(io.StringIO()):
+                self.assertEqual(process(path, dry_run=True), 0)
+            self.assertEqual(path.read_bytes(), before)
 
 
 if __name__ == "__main__":
