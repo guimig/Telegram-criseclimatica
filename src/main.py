@@ -15,7 +15,8 @@ from .state import (
     acknowledge_situations, reset_material_after_transition,
 )
 from .telegram_client import TelegramError, send_telegram
-from .bordering import events_from_dashboard, plan_bordering, acknowledge_bordering, format_bordering
+from .bordering import events_from_dashboard, plan_bordering, acknowledge_bordering, format_bordering, covered_by_local_message
+from .message_formatter import MAX_EVENTS_IN_MESSAGE
 
 
 def process(state_path: Path, *, dry_run: bool = False, base_url: str = BASE_URL) -> int:
@@ -61,6 +62,7 @@ def process(state_path: Path, *, dry_run: bool = False, base_url: str = BASE_URL
 
     sent = 0
     current_transition_sent = False
+    communicated_local = []
     for step in steps:
         is_current = step["episode"]["first_seen_at"] == episodes[-1]["first_seen_at"]
         if step["notify"]:
@@ -72,6 +74,8 @@ def process(state_path: Path, *, dry_run: bool = False, base_url: str = BASE_URL
             )
             transmit(text)
             sent += 1
+            if is_current and risk:
+                communicated_local.extend(events[:MAX_EVENTS_IN_MESSAGE])
 
         # O cursor de nível avança apenas após confirmação de cada notificação.
         state = {**state, "last_episode_at": step["next_state"]["last_episode_at"],
@@ -93,6 +97,7 @@ def process(state_path: Path, *, dry_run: bool = False, base_url: str = BASE_URL
             message = format_continuity(
                 current_risk["level"], publication.publication_at, ready)
             transmit(message)
+            communicated_local.extend(ready[:MAX_EVENTS_IN_MESSAGE])
             state = acknowledge_situations(state, ready, publication.publication_at)
             persist()
             print(f"[CONTINUIDADE] {len(ready)} situação(ões) materialmente nova(s).")
@@ -107,13 +112,22 @@ def process(state_path: Path, *, dry_run: bool = False, base_url: str = BASE_URL
         persist()
         if not was_initialized:
             print("[LIMÍTROFES] Avisos existentes registrados sem envio inicial.")
+        regional_sent = 0
         for event in bordering_pending:
+            if covered_by_local_message(event, communicated_local):
+                # A local message already included an event with equal or
+                # higher gravity; store coverage so the next poll will not repeat it.
+                state = acknowledge_bordering(state, event, publication.publication_at)
+                persist()
+                print("[LIMÍTROFES] Situação já comunicada localmente; duplicação evitada.")
+                continue
             transmit(format_bordering(event, publication.publication_at, current_risk["level"]))
             state = acknowledge_bordering(state, event, publication.publication_at)
             persist()
             sent += 1
-        if bordering_pending:
-            print(f"[LIMÍTROFES] {len(bordering_pending)} novidade(s) oficial(is) comunicada(s).")
+            regional_sent += 1
+        if regional_sent:
+            print(f"[LIMÍTROFES] {regional_sent} novidade(s) oficial(is) comunicada(s).")
     return sent
 
 

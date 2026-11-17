@@ -73,10 +73,14 @@ def events_from_dashboard(dashboard: dict, at: str) -> list[BorderingEvent] | No
             raise SourceError("Período regional inválido") from exc
         if not start < end or now >= end or start > now:
             continue  # Scheduled or expired warning, never message as ongoing.
-        severity = notice.get("severity")
-        rank = {"Perigo": 2, "Grande Perigo": 3}.get(severity)
-        if rank is None:
-            continue  # Potential danger is for the dashboard, not Telegram.
+        severity = str(notice.get("severity") or "")
+        normalized = "".join(
+            c for c in unicodedata.normalize("NFKD", severity.casefold())
+            if not unicodedata.combining(c)
+        )
+        rank = {"perigo": 2, "grande perigo": 3}.get(" ".join(normalized.split()))
+        if rank is None or notice.get("severity_rank") != rank:
+            continue  # Only Perigo or Grande Perigo with matching official rank.
         if notice.get("scope") != "bordering_municipalities_only" or notice.get("araquari_included") is not False:
             raise SourceError("Aviso de Araquari não pode ser comunicado como aviso limítrofe")
         identifier = notice.get("id")
@@ -110,6 +114,20 @@ def events_from_dashboard(dashboard: dict, at: str) -> list[BorderingEvent] | No
                 old.retained_previous and event.retained_previous,
             )
     return sorted(selected.values(), key=lambda e: (-e.rank, e.start_at, e.key))
+
+
+def covered_by_local_message(event: BorderingEvent, communicated: list) -> bool:
+    """Suppress a regional message when this run already communicated the same
+    day, phenomenon and at least the same gravity for Araquari.
+    """
+    day = timestamp(event.start_at).astimezone(LOCAL).date().isoformat()
+    hazard = _phenomenon(event.title)
+    hazard = {"vento": "vento_forte", "chuva": "chuva_intensa"}.get(hazard, hazard)
+    return any(
+        situation.day == day and situation.hazard == hazard
+        and situation.rank >= event.rank * 10 + 10
+        for situation in communicated
+    )
 
 
 def plan_bordering(state: dict, events: list[BorderingEvent], at: str) -> tuple[dict, list[BorderingEvent]]:
