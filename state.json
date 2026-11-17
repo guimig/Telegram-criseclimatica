@@ -13,6 +13,8 @@
       "rank": 20
     }
   },
+  "bordering_announcements": {},
+  "bordering_initialized": false,
   "evidence_initialized": true,
   "last_episode_at": "2026-11-16T13:04:19Z",
   "last_level": "amarelo",
