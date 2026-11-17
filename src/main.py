@@ -15,6 +15,7 @@ from .state import (
     acknowledge_situations, reset_material_after_transition,
 )
 from .telegram_client import TelegramError, send_telegram
+from .bordering import events_from_dashboard, plan_bordering, acknowledge_bordering, format_bordering
 
 
 def process(state_path: Path, *, dry_run: bool = False, base_url: str = BASE_URL) -> int:
@@ -26,6 +27,7 @@ def process(state_path: Path, *, dry_run: bool = False, base_url: str = BASE_URL
     events = aggregate_situations(
         extract_drivers(current_risk, at=publication.publication_at)
     )
+    bordering_events = events_from_dashboard(publication.dashboard, publication.publication_at)
     token = os.environ.get("TELEGRAM_TOKEN", "")
     chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
 
@@ -44,6 +46,8 @@ def process(state_path: Path, *, dry_run: bool = False, base_url: str = BASE_URL
 
     if baseline:
         state = reset_material_after_transition(baseline, events, publication.publication_at)
+        if bordering_events is not None:
+            state, _ = plan_bordering(state, bordering_events, publication.publication_at)
         persist()
         print("[BASELINE] Nível inicial e situações materiais registrados sem envio.")
         return 0
@@ -97,6 +101,19 @@ def process(state_path: Path, *, dry_run: bool = False, base_url: str = BASE_URL
             print(f"[CONSOLIDAÇÃO] {len(state['pending_situations'])} situação(ões) aguardando janela.")
         elif not steps:
             print("[SEM ALTERAÇÃO] Nenhuma mudança relevante para comunicar.")
+    if bordering_events is not None:
+        was_initialized = state["bordering_initialized"]
+        state, bordering_pending = plan_bordering(state, bordering_events, publication.publication_at)
+        persist()
+        if not was_initialized:
+            print("[LIMÍTROFES] Avisos existentes registrados sem envio inicial.")
+        for event in bordering_pending:
+            transmit(format_bordering(event, publication.publication_at, current_risk["level"]))
+            state = acknowledge_bordering(state, event, publication.publication_at)
+            persist()
+            sent += 1
+        if bordering_pending:
+            print(f"[LIMÍTROFES] {len(bordering_pending)} novidade(s) oficial(is) comunicada(s).")
     return sent
 
 
