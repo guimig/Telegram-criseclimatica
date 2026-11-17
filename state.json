@@ -1,8 +1,24 @@
 {
+  "announced_situations": {
+    "6743153f491ded1e7c3f708154a5": {
+      "notified_at": "2026-11-17T16:36:31Z",
+      "rank": 10
+    },
+    "93474220a444035fa0d5b3d198a9": {
+      "notified_at": "2026-11-17T16:36:31Z",
+      "rank": 20
+    },
+    "d105cb37fc33b0bb3adf05e5e783": {
+      "notified_at": "2026-11-17T16:36:31Z",
+      "rank": 20
+    }
+  },
   "evidence_initialized": true,
   "last_episode_at": "2026-11-16T13:04:19Z",
   "last_level": "amarelo",
   "location_id": "araquari",
+  "material_initialized": true,
+  "pending_situations": {},
   "schema_version": 1,
   "seen_evidence": {
     "074cbaafbdf5d6695d4732219159": "2026-11-17T03:19:14Z",
