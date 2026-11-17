@@ -148,6 +148,47 @@ class BorderIntegrationTests(unittest.TestCase):
             self.assertNotIn("→", messages[0])
             self.assertEqual(self.run_process(path, repeated)[0], 0)
 
+    def test_local_transition_and_regional_notice_are_not_sent_twice(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "state.json"
+            write_state(path, {**DEFAULT_STATE, "last_episode_at": stamp(-50),
+                               "last_level": "verde", "material_initialized": True,
+                               "bordering_initialized": True})
+            pub = publication(episodes=[episode("verde", -50), episode("amarelo", -20)])
+            pub.dashboard["bordering_notice_context"] = context()
+            pub.dashboard["risk_classification"]["candidates"] = [{
+                "level": "amarelo", "basis": "applicable_official_notice",
+                "reason": "INMET: Tempestade.", "valid_until": stamp(90),
+                "evidence": [{"source": "INMET", "id": "local-900", "title": "Tempestade",
+                              "severity": "Perigo", "scope": "municipality_explicit",
+                              "start_at": stamp(-30), "end_at": stamp(90)}]}]
+            count, messages = self.run_process(path, pub)
+            self.assertEqual(count, 1)
+            self.assertEqual(len(messages), 1)
+            self.assertIn("ARAQUARI", messages[0])
+            self.assertNotIn("NO ENTORNO", messages[0])
+            self.assertEqual(len(read_state(path)["bordering_announcements"]), 1)
+            self.assertEqual(self.run_process(path, pub)[0], 0)
+
+    def test_low_local_warning_does_not_hide_severe_neighboring_warning(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "state.json"
+            write_state(path, {**DEFAULT_STATE, "last_episode_at": stamp(-50),
+                               "last_level": "verde", "material_initialized": True,
+                               "bordering_initialized": True})
+            pub = publication(episodes=[episode("verde", -50), episode("amarelo", -20)])
+            pub.dashboard["bordering_notice_context"] = context()
+            pub.dashboard["risk_classification"]["candidates"] = [{
+                "level": "amarelo", "basis": "applicable_official_notice",
+                "reason": "INMET: Tempestade.", "valid_until": stamp(90),
+                "evidence": [{"source": "INMET", "id": "local-901", "title": "Tempestade",
+                              "severity": "Perigo Potencial", "scope": "municipality_explicit",
+                              "start_at": stamp(-30), "end_at": stamp(90)}]}]
+            count, messages = self.run_process(path, pub)
+            self.assertEqual(count, 2)
+            self.assertEqual(len(messages), 2)
+            self.assertEqual(sum("NO ENTORNO" in message for message in messages), 1)
+
     def test_failed_telegram_preserves_pending_notification(self):
         with tempfile.TemporaryDirectory() as td:
             path = Path(td) / "state.json"
