@@ -125,6 +125,8 @@ def _rank(driver: Driver) -> int:
     if driver.kind == "publicação":
         return 10 if "municipality_explicit" in scope else 0
     if driver.kind == "sinal":
+        if driver.band is not None and driver.band >= 3:
+            return 30
         return 15 if driver.band is not None and driver.band >= 2 else 0
     return 0
 
