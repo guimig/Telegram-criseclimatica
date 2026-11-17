@@ -51,6 +51,7 @@ class Driver:
     period: str | None = None
     phenomena: tuple[str, ...] = ()
     severity: str | None = None
+    scope: str | None = None
 
 
 def clean(value: object) -> str:
@@ -182,6 +183,7 @@ def extract_drivers(risk: dict, *, at: str) -> list[Driver]:
                 title=title, url=specific_notice_url(row, source) if kind == "aviso" else None,
                 start_at=start, end_at=end, day=day, period=period,
                 phenomena=phenomena, severity=severity,
+                scope=clean(row.get("scope")) or None,
             ))
     # Priorizar avisos oficiais diante de previsões e sinais instrumentais.
     order = {"aviso": 0, "publicação": 1, "previsão": 2, "sinal": 3}
