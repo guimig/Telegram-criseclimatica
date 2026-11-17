@@ -48,14 +48,17 @@ def _driver_lines(driver: Driver) -> list[str]:
         lines = [text]
         if driver.scope and "regional" in driver.scope and "municipal" in driver.scope:
             lines.append("  Abrangência regional; inclusão municipal não confirmada.")
+        period_verified = False
         if driver.start_at and driver.end_at:
             try:
                 if timestamp(driver.start_at) < timestamp(driver.end_at):
                     lines.append(f"  Período informado: {local_time(driver.start_at)} a {local_time(driver.end_at)} (Brasília)")
+                    period_verified = True
             except SourceError:
                 pass
-        else:
-            lines.append("  Período oficial: verifique na fonte.")
+        if not period_verified:
+            reported = clip(driver.reported_window, 130)
+            lines.append("  Validade a confirmar." + (f" Fonte informa: {reported}" if reported else ""))
         if driver.url:
             lines.append(f"  Aviso completo: {driver.url}")
         else:
