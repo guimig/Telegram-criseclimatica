@@ -56,10 +56,12 @@ def _dates(driver: Driver) -> list[str]:
             end = timestamp(driver.end_at).astimezone(LOCAL)
         except SourceError:
             return []
-        if end <= start:
+        if end < start or (end == start and driver.kind != "sinal"):
             return []
-        # A meia-noite exclusiva de um registro não deve criar um novo dia.
-        end = end - timedelta(microseconds=1)
+        # Uma leitura pontual pode ter início e fim iguais; períodos de avisos
+        # com fim exclusivo à meia-noite não criam um dia adicional.
+        if end > start:
+            end = end - timedelta(microseconds=1)
     elif driver.reported_window:
         # Período textual: informar apenas o dia sem afirmar vigência verificada.
         dates = re.findall(r"\b(\d{2}/\d{2}/\d{4})\b", driver.reported_window)
