@@ -13,7 +13,12 @@
       "rank": 20
     }
   },
-  "bordering_announcements": {},
+  "bordering_announcements": {
+    "d452ce7f7c90f17e0ebbae68b778": {
+      "notified_at": "2026-11-18T03:04:23Z",
+      "rank": 2
+    }
+  },
   "bordering_initialized": true,
   "evidence_initialized": true,
   "last_episode_at": "2026-11-16T13:04:19Z",
