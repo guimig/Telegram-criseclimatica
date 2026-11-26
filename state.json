@@ -77,7 +77,12 @@
   "last_level": "amarelo",
   "location_id": "araquari",
   "material_initialized": true,
-  "pending_situations": {},
+  "pending_situations": {
+    "76df4a71c7b2e91e86ee170ea291": {
+      "first_seen_at": "2026-11-26T13:05:01Z",
+      "rank": 20
+    }
+  },
   "schema_version": 1,
   "seen_evidence": {
     "074cbaafbdf5d6695d4732219159": "2026-11-17T03:19:14Z",
